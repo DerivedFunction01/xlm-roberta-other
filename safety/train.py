@@ -96,12 +96,16 @@ def compute_step_interval(train_size: int, *, checkpoints_per_epoch: int) -> int
 
 
 class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
-    def __init__(self, config: XLMRobertaConfig):
+    def __init__(self, config: XLMRobertaConfig, category_pos_weight: torch.Tensor | None = None):
         super().__init__(config)
         self.roberta = XLMRobertaModel(config, add_pooling_layer=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.binary_classifier = nn.Linear(config.hidden_size, 1)
         self.category_classifier = nn.Linear(config.hidden_size, config.num_category_labels)
+        if category_pos_weight is None:
+            self.register_buffer("category_pos_weight", None, persistent=False)
+        else:
+            self.register_buffer("category_pos_weight", category_pos_weight.float(), persistent=False)
         self.post_init()
 
     def forward(
@@ -129,7 +133,11 @@ class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
         loss = None
         if labels is not None and binary_label is not None:
             binary_loss = nn.functional.binary_cross_entropy_with_logits(binary_logits, binary_label.float())
-            category_loss = nn.functional.binary_cross_entropy_with_logits(category_logits, labels.float())
+            category_loss = nn.functional.binary_cross_entropy_with_logits(
+                category_logits,
+                labels.float(),
+                pos_weight=self.category_pos_weight,
+            )
             loss = binary_loss + category_loss
 
         return SequenceClassifierOutput(
@@ -197,6 +205,7 @@ print(f"  Test:  {len(ds['test']):,}")
 print(f"  GPU count: {get_world_size()}")
 binary_counts = meta.get("binary_label_counts", {})
 category_counts = meta.get("category_positive_counts", {})
+num_examples = int(meta.get("num_examples", len(ds["train"])))
 if binary_counts:
     print("  Binary distribution:")
     for label, count in sorted(binary_counts.items()):
@@ -213,6 +222,17 @@ if category_counts:
             print(f"    {label}: {count}")
         else:
             print(f"    {label}: {count} ({rate:.3%})")
+category_pos_weight = torch.tensor(
+    [
+        (max(num_examples - int(category_counts.get(category, 0)), 1) / max(int(category_counts.get(category, 0)), 1))
+        for category in known_categories
+    ],
+    dtype=torch.float32,
+)
+print(
+    "  Category pos_weight range: "
+    f"{float(category_pos_weight.min()):.2f} .. {float(category_pos_weight.max()):.2f}"
+)
 warmup_steps = compute_warmup_steps(len(ds["train"]))
 eval_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["evals_per_epoch"])
 save_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["saves_per_epoch"])
@@ -236,6 +256,7 @@ model = XLMRobertaTwoHeadForSafety.from_pretrained(
     CONFIG["model_name"],
     config=model_config,
     ignore_mismatched_sizes=True,
+    category_pos_weight=category_pos_weight,
     token=HF_TOKEN,
 )
 
