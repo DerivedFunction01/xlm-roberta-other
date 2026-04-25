@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # %%
+import math
 import json
 import random
 import warnings
@@ -32,13 +33,14 @@ CONFIG = {
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 4,
     "gradient_accumulation_steps": 4,
-    "warmup_steps": 5686,
     "weight_decay": 0.01,
     "fp16": True,
     "dataloader_num_workers": 4,
     "seed": 42,
     "threshold": 0.5,
 }
+
+WARMUP_RATIO = 0.1
 
 BASE_DIR = Path(".")
 HF_TOKEN_PATH = BASE_DIR / "hf_token"
@@ -66,6 +68,15 @@ def load_cached_dataset(cache_dir: Path) -> DatasetDict:
     if not split_files:
         raise FileNotFoundError(f"No parquet splits found in {cache_dir}")
     return load_dataset("parquet", data_files=split_files)
+
+
+def compute_warmup_steps(train_size: int) -> int:
+    steps_per_epoch = math.ceil(
+        train_size
+        / (CONFIG["per_device_train_batch_size"] * CONFIG["gradient_accumulation_steps"])
+    )
+    total_steps = steps_per_epoch * CONFIG["num_train_epochs"]
+    return max(1, int(total_steps * WARMUP_RATIO))
 
 
 class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
@@ -113,7 +124,7 @@ class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
         )
 
 
-def make_training_args() -> TrainingArguments:
+def make_training_args(*, warmup_steps: int) -> TrainingArguments:
     return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
@@ -121,7 +132,7 @@ def make_training_args() -> TrainingArguments:
         per_device_train_batch_size=CONFIG["per_device_train_batch_size"],
         per_device_eval_batch_size=CONFIG["per_device_eval_batch_size"],
         gradient_accumulation_steps=CONFIG["gradient_accumulation_steps"],
-        warmup_steps=CONFIG["warmup_steps"],
+        warmup_steps=warmup_steps,
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
         dataloader_num_workers=CONFIG["dataloader_num_workers"],
@@ -164,7 +175,8 @@ print(f"  Known categories: {len(known_categories)}")
 print(f"  Train: {len(ds['train']):,}")
 print(f"  Val:   {len(ds['val']):,}")
 print(f"  Test:  {len(ds['test']):,}")
-print(f"  Warmup steps: {CONFIG['warmup_steps']}")
+warmup_steps = compute_warmup_steps(len(ds["train"]))
+print(f"  Warmup steps: {warmup_steps}")
 
 for split_name in ("train", "val", "test"):
     ds[split_name].set_format("torch", columns=["input_ids", "attention_mask", "labels", "binary_label"])
@@ -235,7 +247,7 @@ def compute_metrics(eval_pred):
 
 trainer = Trainer(
     model=model,
-    args=make_training_args(),
+    args=make_training_args(warmup_steps=warmup_steps),
     train_dataset=ds["train"],
     eval_dataset=ds["val"],
     compute_metrics=compute_metrics,

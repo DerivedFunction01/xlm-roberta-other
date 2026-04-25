@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # %%
+import math
 import json
 import random
 from pathlib import Path
@@ -21,11 +22,12 @@ CONFIG = {
     "per_device_train_batch_size": 16,
     "per_device_eval_batch_size": 16,
     "gradient_accumulation_steps": 1,
-    "warmup_steps": 4966,
     "weight_decay": 0.06,
     "fp16": True,
     "seed": 42,
 }
+
+WARMUP_RATIO = 0.1
 
 BASE_DIR = Path(".")
 HF_TOKEN_PATH = BASE_DIR / "hf_token"
@@ -55,7 +57,16 @@ def load_cached_dataset(cache_dir: Path) -> DatasetDict:
     return load_dataset("parquet", data_files=split_files)
 
 
-def make_training_args() -> TrainingArguments:
+def compute_warmup_steps(train_size: int) -> int:
+    steps_per_epoch = math.ceil(
+        train_size
+        / (CONFIG["per_device_train_batch_size"] * CONFIG["gradient_accumulation_steps"])
+    )
+    total_steps = steps_per_epoch * CONFIG["num_train_epochs"]
+    return max(1, int(total_steps * WARMUP_RATIO))
+
+
+def make_training_args(*, warmup_steps: int) -> TrainingArguments:
     return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
@@ -63,7 +74,7 @@ def make_training_args() -> TrainingArguments:
         per_device_train_batch_size=CONFIG["per_device_train_batch_size"],
         per_device_eval_batch_size=CONFIG["per_device_eval_batch_size"],
         gradient_accumulation_steps=CONFIG["gradient_accumulation_steps"],
-        warmup_steps=CONFIG["warmup_steps"],
+        warmup_steps=warmup_steps,
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
         eval_strategy="epoch",
@@ -93,7 +104,8 @@ eval_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"
 
 print(f"Final train: {len(train_dataset):,} rows")
 print(f"Final eval:  {len(eval_dataset):,} rows")
-print(f"Warmup steps: {CONFIG['warmup_steps']}")
+warmup_steps = compute_warmup_steps(len(train_dataset))
+print(f"Warmup steps: {warmup_steps}")
 
 
 # %%
@@ -117,7 +129,7 @@ def compute_metrics(eval_pred):
 
 trainer = Trainer(
     model=model,
-    args=make_training_args(),
+    args=make_training_args(warmup_steps=warmup_steps),
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     compute_metrics=compute_metrics,
