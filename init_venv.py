@@ -42,8 +42,9 @@ CUSTOM_PACKAGES = [
 ]
 
 # Packages for the classification server
-CLASSIFICATION_PACKAGES = [
+ML_PACKAGES = [
     "tensorboardX",
+    "tensorboard",
     "transformers",
     "evaluate",
     "datasets",
@@ -53,7 +54,7 @@ CLASSIFICATION_PACKAGES = [
 
 # For the old "install all" option, kept for compatibility if needed
 # but the new menu provides more granular control.
-PACKAGES = CLASSIFICATION_PACKAGES + BASE_PACKAGES + CUSTOM_PACKAGES
+PACKAGES = ML_PACKAGES + BASE_PACKAGES + CUSTOM_PACKAGES
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +523,7 @@ def main():
                 print("🧱 PyTorch is already locked. Skipping PyTorch install.")
             else:
                 install_pytorch()
-            install_packages(CLASSIFICATION_PACKAGES, "classification packages")
+            install_packages(ML_PACKAGES, "classification packages")
             install_packages(CUSTOM_PACKAGES, "custom packages")
             install_packages(BASE_PACKAGES, "base packages")
             print("\n✅ Classification Server setup complete!")
@@ -534,7 +535,7 @@ def main():
                 print("🧱 PyTorch is already locked. Skipping PyTorch install.")
             else:
                 install_pytorch()
-            install_packages(CLASSIFICATION_PACKAGES, "classification packages")
+            install_packages(ML_PACKAGES, "classification packages")
             install_packages(CUSTOM_PACKAGES, "custom packages")
             install_packages(BASE_PACKAGES, "base packages")
             print("\n✅ Full Training Environment setup complete!")
