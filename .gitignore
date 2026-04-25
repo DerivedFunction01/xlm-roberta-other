@@ -217,3 +217,24 @@ sentences_cache/*
 .*.*
 
 evaluation_results
+
+# archive files
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z
+# Model weights and large files
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.model
+*.safetensors
+
+# Logs and outputs
+outputs/
+logs/
+runs/
+wandb/
