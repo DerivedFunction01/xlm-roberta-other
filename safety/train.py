@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
 from datasets import DatasetDict, load_dataset
 from sklearn.metrics import f1_score, precision_score, recall_score
 from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
@@ -18,16 +17,17 @@ CONFIG = {
     "model_name": "xlm-roberta-base",
     "output_dir": "./xlmr-safety-guard",
     "max_length": 512,
-    "num_train_epochs": 3,
+    "num_train_epochs": 2,
+    "steps": 1000,
     "learning_rate": 2e-5,
-    "per_device_train_batch_size": 16,
-    "per_device_eval_batch_size": 32,
+    "per_device_train_batch_size": 8,
+    "per_device_eval_batch_size": 4,
+    "gradient_accumulation_steps": 4,
     "warmup_ratio": 0.1,
     "weight_decay": 0.01,
     "fp16": True,
     "dataloader_num_workers": 4,
     "seed": 42,
-    "bce_pos_weight": 10.0,
     "threshold": 0.5,
 }
 
@@ -60,14 +60,17 @@ def make_training_args() -> TrainingArguments:
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
         dataloader_num_workers=CONFIG["dataloader_num_workers"],
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
+        eval_strategy="steps",
+        save_strategy="steps",
+        eval_steps=CONFIG["steps"],
+        save_steps=CONFIG["steps"],
         load_best_model_at_end=True,
         metric_for_best_model="micro_f1",
         greater_is_better=True,
         seed=CONFIG["seed"],
-        report_to="none",
+        report_to="tensorboard",
         label_names=["labels"],
+        push_to_hub=True
     )
 
 
@@ -105,25 +108,6 @@ model = AutoModelForSequenceClassification.from_pretrained(
     problem_type="multi_label_classification",
 )
 
-
-class WeightedBCETrainer(Trainer):
-    """Trainer that uses BCEWithLogitsLoss with optional pos_weight."""
-
-    def __init__(self, *args, pos_weight: float | None = None, **kwargs):
-        super().__init__(*args, **kwargs)
-        if pos_weight is not None:
-            pw = torch.full((len(known_categories),), pos_weight)
-            self._loss_fn = nn.BCEWithLogitsLoss(pos_weight=pw)
-        else:
-            self._loss_fn = nn.BCEWithLogitsLoss()
-
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        labels = inputs.pop("labels").float()
-        outputs = model(**inputs)
-        loss = self._loss_fn(outputs.logits.to(labels.device), labels)
-        return (loss, outputs) if return_outputs else loss
-
-
 threshold = CONFIG["threshold"]
 
 
@@ -149,13 +133,12 @@ def compute_metrics(eval_pred):
     }
 
 
-trainer = WeightedBCETrainer(
+trainer = Trainer(
     model=model,
     args=make_training_args(),
     train_dataset=ds["train"],
     eval_dataset=ds["val"],
     compute_metrics=compute_metrics,
-    pos_weight=CONFIG["bce_pos_weight"],
 )
 
 
