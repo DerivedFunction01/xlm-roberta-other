@@ -28,18 +28,18 @@ def probe_gpu_status():
             timeout=2,
         )
         if result.returncode == 0 and result.stdout.strip():
-            first_line = result.stdout.strip().splitlines()[0]
-            parts = [part.strip() for part in first_line.split(",")]
-            if len(parts) >= 5:
-                name, util, mem_used, mem_total, temp = parts[:5]
-                return [
-                    "GPU: NVIDIA",
-                    f"Name: {name}",
-                    f"Util: {util}%",
-                    f"Mem: {mem_used}/{mem_total} MiB",
-                    f"Temp: {temp} C",
-                ]
-            return ["GPU: NVIDIA", first_line]
+            device_lines = []
+            rows = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            for index, row in enumerate(rows):
+                parts = [part.strip() for part in row.split(",")]
+                if len(parts) >= 5:
+                    name, util, mem_used, mem_total, temp = parts[:5]
+                    device_lines.append(
+                        f"GPU {index}: {name} | Util {util}% | Mem {mem_used}/{mem_total} MiB | Temp {temp} C"
+                    )
+                else:
+                    device_lines.append(f"GPU {index}: {row}")
+            return ["GPU: NVIDIA", *device_lines]
         return ["GPU: NVIDIA", "Status unavailable"]
 
     rocm_smi = shutil.which("rocm-smi")
@@ -71,18 +71,19 @@ def probe_gpu_status():
 
 
 def _parse_rocm_smi_json(payload):
-    def walk(obj):
+    def walk(obj, path=()):
         if isinstance(obj, dict):
-            yield obj
-            for value in obj.values():
-                yield from walk(value)
+            yield path, obj
+            for key, value in obj.items():
+                yield from walk(value, path + (str(key),))
         elif isinstance(obj, list):
-            for value in obj:
-                yield from walk(value)
+            for index, value in enumerate(obj):
+                yield from walk(value, path + (str(index),))
 
     data = json.loads(payload)
-    candidates = []
-    for item in walk(data):
+    devices = []
+    seen = set()
+    for path, item in walk(data):
         lowered = {str(key).lower(): value for key, value in item.items()}
         name = _first_matching(lowered, ("card series", "product name", "gpu name", "name"))
         util = _first_matching(lowered, ("gpu use", "gpu utilization", "utilization"))
@@ -90,37 +91,76 @@ def _parse_rocm_smi_json(payload):
         mem_total = _first_matching(lowered, ("vram total memory", "memory total", "total memory"))
         temp = _first_matching(lowered, ("temperature", "temp"))
 
+        if not any(value is not None for value in (name, util, mem_used, mem_total, temp)):
+            continue
+
+        label = name or _guess_rocm_label(path, lowered)
+        signature = (label, util, mem_used, mem_total, temp)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        devices.append(
+            _format_device_line(
+                label=label,
+                util=util,
+                mem_used=mem_used,
+                mem_total=mem_total,
+                temp=temp,
+            )
+        )
+    return devices
+
+
+def _parse_rocm_smi_text(payload):
+    devices = []
+    current = {}
+    current_label = None
+
+    def flush():
+        nonlocal current, current_label
+        if not current and not current_label:
+            return
+        name = _first_matching(current, ("card series", "product name", "gpu name", "name"))
+        util = _first_matching(current, ("gpu use", "gpu utilization", "utilization"))
+        mem_used = _first_matching(current, ("vram used memory", "memory used", "used memory"))
+        mem_total = _first_matching(current, ("vram total memory", "memory total", "total memory"))
+        temp = _first_matching(current, ("temperature", "temp"))
+        label = name or current_label or f"GPU {len(devices)}"
         if any(value is not None for value in (name, util, mem_used, mem_total, temp)):
-            candidates.extend(
-                _compact_status_lines(
-                    name=name,
+            devices.append(
+                _format_device_line(
+                    label=label,
                     util=util,
                     mem_used=mem_used,
                     mem_total=mem_total,
                     temp=temp,
                 )
             )
-            break
-    return candidates
+        current = {}
+        current_label = None
 
-
-def _parse_rocm_smi_text(payload):
-    data = {}
     for line in payload.splitlines():
-        if ":" not in line:
+        stripped = line.strip()
+        if not stripped:
+            flush()
             continue
-        key, value = line.split(":", 1)
+
+        match = re.match(r"(?:GPU|Card)\[(\d+)\]|\bGPU\s*(\d+)\b", stripped, re.IGNORECASE)
+        if match:
+            flush()
+            current_label = f"GPU {next(group for group in match.groups() if group is not None)}"
+            continue
+
+        if ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
         key = key.strip().lower()
         value = value.strip()
-        if key and value and key not in data:
-            data[key] = value
+        if key and value and key not in current:
+            current[key] = value
 
-    name = _first_matching(data, ("card series", "product name", "gpu name", "name"))
-    util = _first_matching(data, ("gpu use", "gpu utilization", "utilization"))
-    mem_used = _first_matching(data, ("vram used memory", "memory used", "used memory"))
-    mem_total = _first_matching(data, ("vram total memory", "memory total", "total memory"))
-    temp = _first_matching(data, ("temperature", "temp"))
-    return _compact_status_lines(name=name, util=util, mem_used=mem_used, mem_total=mem_total, temp=temp)
+    flush()
+    return devices
 
 
 def _first_matching(mapping, needles):
@@ -128,6 +168,19 @@ def _first_matching(mapping, needles):
         if any(needle in key for needle in needles) and value not in (None, ""):
             return value
     return None
+
+
+def _guess_rocm_label(path, lowered):
+    for part in reversed(path):
+        if part.isdigit():
+            return f"GPU {part}"
+    for candidate in ("card", "gpu", "device", "instance"):
+        for key in lowered:
+            if candidate in key:
+                match = re.search(r"(\d+)", str(lowered[key]))
+                if match is not None:
+                    return f"GPU {match.group(1)}"
+    return f"GPU {len(path)}"
 
 
 def _normalize_memory(value):
@@ -166,23 +219,27 @@ def _normalize_temp(value):
 
 
 def _compact_status_lines(*, name=None, util=None, mem_used=None, mem_total=None, temp=None):
-    lines = []
-    if name:
-        lines.append(f"Name: {name}")
+    return [_format_device_line(label=name, util=util, mem_used=mem_used, mem_total=mem_total, temp=temp)]
+
+
+def _format_device_line(*, label=None, util=None, mem_used=None, mem_total=None, temp=None):
+    parts = []
+    if label:
+        parts.append(str(label))
     if util:
-        lines.append(f"Util: {_normalize_percent(util)}")
+        parts.append(f"Util {_normalize_percent(util)}")
     if mem_used or mem_total:
         used = _normalize_memory(mem_used) or str(mem_used).strip()
         total = _normalize_memory(mem_total) or str(mem_total).strip()
         if used and total:
-            lines.append(f"Mem: {used} / {total}")
+            parts.append(f"Mem {used}/{total}")
         elif used:
-            lines.append(f"Mem: {used}")
+            parts.append(f"Mem {used}")
         elif total:
-            lines.append(f"Mem: {total}")
+            parts.append(f"Mem {total}")
     if temp:
-        lines.append(f"Temp: {_normalize_temp(temp)}")
-    return lines
+        parts.append(f"Temp {_normalize_temp(temp)}")
+    return " | ".join(parts)
 
 
 def load_scalars(acc):
