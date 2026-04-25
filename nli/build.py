@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from datasets import Dataset, DatasetDict, concatenate_datasets
+from datasets import Dataset, DatasetDict, Value, concatenate_datasets
 from transformers import AutoTokenizer
 
 from shared.cache import save_dataset_cache, load_dataset_cache
@@ -142,6 +142,8 @@ def build_nli_datasets(
     _keep = ["premise", "hypothesis", "label"]
     mnli_train = mnli_train.map(_mnli_schema, batched=True, remove_columns=[c for c in mnli_train.column_names if c not in _keep])
     mnli_val = mnli_val.map(_mnli_schema, batched=True, remove_columns=[c for c in mnli_val.column_names if c not in _keep])
+    mnli_train = mnli_train.cast_column("label", Value("int64"))
+    mnli_val = mnli_val.cast_column("label", Value("int64"))
 
     xnli_raw = load_xnli_dataset()
     xnli_dev = xnli_raw["validation"]
@@ -162,6 +164,8 @@ def build_nli_datasets(
         langs=xnli_languages,
         seed=seed,
     )
+    xnli_train = xnli_train.cast_column("label", Value("int64"))
+    xnli_val = xnli_val.cast_column("label", Value("int64"))
 
     train_dataset = concatenate_datasets([mnli_train, xnli_train]).shuffle(seed=seed)
     eval_dataset = concatenate_datasets([mnli_val, xnli_val]).shuffle(seed=seed)
