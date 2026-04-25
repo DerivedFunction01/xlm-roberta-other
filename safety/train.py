@@ -40,7 +40,7 @@ CONFIG = {
     "dataloader_num_workers": 4,
     "seed": 42,
     "threshold": 0.5,
-    "max_category_pos_weight": 50.0,
+    "max_category_pos_weight": 25.0,
 }
 
 WARMUP_RATIO = 0.1
@@ -133,9 +133,12 @@ class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
 
         loss = None
         if labels is not None and binary_label is not None:
-            binary_loss = nn.functional.binary_cross_entropy_with_logits(binary_logits, binary_label.float())
+            binary_loss = nn.functional.binary_cross_entropy_with_logits(
+                binary_logits.float(),
+                binary_label.float(),
+            )
             category_loss = nn.functional.binary_cross_entropy_with_logits(
-                category_logits,
+                category_logits.float(),
                 labels.float(),
                 pos_weight=self.category_pos_weight,
             )
