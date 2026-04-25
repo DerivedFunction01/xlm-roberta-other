@@ -40,7 +40,7 @@ CONFIG = {
     "dataloader_num_workers": 4,
     "seed": 42,
     "threshold": 0.5,
-    "max_category_pos_weight": 10.0,
+    "max_category_pos_weight": 20.0,
 }
 
 WARMUP_RATIO = 0.1
@@ -226,15 +226,20 @@ if category_counts:
             print(f"    {label}: {count}")
         else:
             print(f"    {label}: {count} ({rate:.3%})")
+
 category_pos_weight = torch.tensor(
     [
-        (max(num_examples - int(category_counts.get(category, 0)), 1) / max(int(category_counts.get(category, 0)), 1))
-        for category in known_categories
+        min(
+            (
+                max(num_examples - int(category_counts.get(c, 0)), 1)
+                / max(int(category_counts.get(c, 0)), 1)
+            ),
+            CONFIG["max_category_pos_weight"],
+        )
+        for c in known_categories
     ],
     dtype=torch.float32,
 )
-category_pos_weight = torch.sqrt(category_pos_weight)
-category_pos_weight = torch.clamp(category_pos_weight, max=CONFIG["max_category_pos_weight"])
 print(
     "  Category pos_weight range: "
     f"{float(category_pos_weight.min()):.2f} .. {float(category_pos_weight.max()):.2f}"
