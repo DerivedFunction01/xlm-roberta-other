@@ -8,7 +8,7 @@ from datasets import DatasetDict
 
 from shared.building import rows_to_dataset_dict, split_indices
 from shared.cache import load_dataset_cache, save_dataset_cache
-from safety.data import REDACTED_TOKEN, build_flat_examples, build_label_vocabulary, row_to_examples
+from safety.build import REDACTED_TOKEN, build_flat_examples, build_label_vocabulary, row_to_examples
 
 
 class BuildingAndSafetyDataTests(unittest.TestCase):

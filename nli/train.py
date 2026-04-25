@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+# %%
+import json
+import random
+from pathlib import Path
+
+import evaluate
+import numpy as np
+from datasets import DatasetDict, load_dataset
+from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
+
+# %%
 CONFIG = {
     "model_name": "xlm-roberta-base",
     "output_dir": "./xlmr-xnli-mnli",
-    "mnli_train_size": None,
-    "mnli_val_size": None,
-    "xnli_pool_size": None,
-    "xnli_val_size": 400,
-    "same_lang_pct": 50,
-    "cross_lang_pct": 50,
-    "xnli_languages": ["ar", "bg", "de", "el", "en", "es", "fr", "hi", "ru", "sw", "th", "tr", "ur", "vi", "zh"],
     "max_length": 256,
     "num_train_epochs": 2,
     "learning_rate": 2e-5,
@@ -21,67 +25,26 @@ CONFIG = {
     "seed": 42,
 }
 
-import random
-
-import evaluate
-import numpy as np
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
-
-from .data import ID2LABEL, LABEL2ID, build_nli_datasets
+BASE_DIR = Path(".")
+TOKENIZED_CACHE_DIR = BASE_DIR / ".cache" / "xlm_roberta_other" / "nli" / "tokenized"
+TOKENIZED_CACHE_META = TOKENIZED_CACHE_DIR / "dataset.meta.json"
+LABEL2ID = {"entailment": 0, "neutral": 1, "contradiction": 2}
+ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
 random.seed(CONFIG["seed"])
 np.random.seed(CONFIG["seed"])
 
 
-def main() -> None:
-    print("Building NLI datasets...")
-    train_dataset, eval_dataset = build_nli_datasets(
-        mnli_train_size=CONFIG["mnli_train_size"],
-        mnli_val_size=CONFIG["mnli_val_size"],
-        xnli_pool_size=CONFIG["xnli_pool_size"],
-        xnli_val_size=CONFIG["xnli_val_size"],
-        same_lang_pct=CONFIG["same_lang_pct"],
-        cross_lang_pct=CONFIG["cross_lang_pct"],
-        xnli_languages=CONFIG["xnli_languages"],
-        seed=CONFIG["seed"],
-    )
+# %%
+def load_cached_dataset(cache_dir: Path) -> DatasetDict:
+    split_files = {path.stem: str(path) for path in sorted(cache_dir.glob("*.parquet"))}
+    if not split_files:
+        raise FileNotFoundError(f"No parquet splits found in {cache_dir}")
+    return load_dataset("parquet", data_files=split_files)
 
-    print(f"Final train: {len(train_dataset):,} rows")
-    print(f"Final eval:  {len(eval_dataset):,} rows")
 
-    print(f"\nLoading tokenizer: {CONFIG['model_name']}")
-    tokenizer = AutoTokenizer.from_pretrained(CONFIG["model_name"])
-
-    def tokenize(batch):
-        return tokenizer(
-            batch["premise"],
-            batch["hypothesis"],
-            truncation=True,
-            max_length=CONFIG["max_length"],
-            padding="max_length",
-        )
-
-    train_dataset = train_dataset.map(tokenize, batched=True)
-    eval_dataset = eval_dataset.map(tokenize, batched=True)
-    train_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"])
-    eval_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"])
-
-    print(f"Loading model: {CONFIG['model_name']}")
-    model = AutoModelForSequenceClassification.from_pretrained(
-        CONFIG["model_name"],
-        num_labels=3,
-        id2label=ID2LABEL,
-        label2id=LABEL2ID,
-    )
-
-    accuracy_metric = evaluate.load("accuracy")
-
-    def compute_metrics(eval_pred):
-        logits, labels = eval_pred
-        preds = np.argmax(logits, axis=-1)
-        return accuracy_metric.compute(predictions=preds, references=labels)
-
-    training_args = TrainingArguments(
+def make_training_args() -> TrainingArguments:
+    return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
         learning_rate=CONFIG["learning_rate"],
@@ -98,21 +61,55 @@ def main() -> None:
         report_to="none",
     )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-        compute_metrics=compute_metrics,
-    )
 
-    trainer.train()
-    trainer.save_model(CONFIG["output_dir"])
-    tokenizer.save_pretrained(CONFIG["output_dir"])
-    print(f"\nModel saved to: {CONFIG['output_dir']}")
+# %%
+if not TOKENIZED_CACHE_META.exists():
+    raise RuntimeError("Tokenized NLI cache not found. Run the build script first.")
+
+with TOKENIZED_CACHE_META.open(encoding="utf-8") as f:
+    meta = json.load(f)
+
+if meta.get("model_name") != CONFIG["model_name"] or meta.get("max_length") != CONFIG["max_length"]:
+    raise RuntimeError("NLI cache metadata does not match the current config.")
+
+cached = load_cached_dataset(TOKENIZED_CACHE_DIR)
+train_dataset = cached["train"]
+eval_dataset = cached["val"]
+train_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"])
+eval_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"])
+
+print(f"Final train: {len(train_dataset):,} rows")
+print(f"Final eval:  {len(eval_dataset):,} rows")
 
 
-if __name__ == "__main__":
-    main()
+# %%
+print(f"Loading model: {CONFIG['model_name']}")
+model = AutoModelForSequenceClassification.from_pretrained(
+    CONFIG["model_name"],
+    num_labels=3,
+    id2label=ID2LABEL,
+    label2id=LABEL2ID,
+)
 
+accuracy_metric = evaluate.load("accuracy")
+
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    preds = np.argmax(logits, axis=-1)
+    return accuracy_metric.compute(predictions=preds, references=labels)
+
+
+trainer = Trainer(
+    model=model,
+    args=make_training_args(),
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    compute_metrics=compute_metrics,
+)
+
+
+# %%
+trainer.train()
+trainer.save_model(CONFIG["output_dir"])
+print(f"\nModel saved to: {CONFIG['output_dir']}")

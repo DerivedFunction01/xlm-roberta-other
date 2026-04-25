@@ -1,6 +1,5 @@
-from .train import main
+from __future__ import annotations
 
+import runpy
 
-if __name__ == "__main__":
-    main()
-
+runpy.run_module("safety.train", run_name="__main__")

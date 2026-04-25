@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+# %%
+import json
+import random
+import warnings
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+from datasets import DatasetDict, load_dataset
+from sklearn.metrics import f1_score, precision_score, recall_score
+from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
+
+# %%
 CONFIG = {
     "model_name": "xlm-roberta-base",
     "output_dir": "./xlmr-safety-guard",
-    "dataset_split": "train",
-    "val_size": 0.05,
-    "test_size": 0.05,
-    "drop_redacted": True,
-    "augment": True,
-    "min_label_count": 10,
-    "max_length": 256,
+    "max_length": 512,
     "num_train_epochs": 3,
     "learning_rate": 2e-5,
     "per_device_train_batch_size": 16,
@@ -21,20 +29,11 @@ CONFIG = {
     "seed": 42,
     "bce_pos_weight": 10.0,
     "threshold": 0.5,
-    "force_rebuild_cache": False,
 }
 
-import random
-import warnings
-
-import numpy as np
-import torch
-import torch.nn as nn
-from sklearn.metrics import f1_score, precision_score, recall_score
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
-
-from shared.paths import PATHS
-from .data import build_safety_classifier_dataset
+BASE_DIR = Path(".")
+TOKENIZED_CACHE_DIR = BASE_DIR / ".cache" / "xlm_roberta_other" / "safety" / "tokenized"
+TOKENIZED_CACHE_META = TOKENIZED_CACHE_DIR / "dataset.meta.json"
 
 random.seed(CONFIG["seed"])
 np.random.seed(CONFIG["seed"])
@@ -42,93 +41,16 @@ torch.manual_seed(CONFIG["seed"])
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def main() -> None:
-    print("Building / loading safety dataset cache ...")
-    ds, known_categories, label2id, id2label, meta = build_safety_classifier_dataset(
-        dataset_split=CONFIG["dataset_split"],
-        drop_redacted=CONFIG["drop_redacted"],
-        augment=CONFIG["augment"],
-        min_label_count=CONFIG["min_label_count"],
-        val_size=CONFIG["val_size"],
-        test_size=CONFIG["test_size"],
-        seed=CONFIG["seed"],
-        force_rebuild=CONFIG["force_rebuild_cache"],
-        cache_dir=PATHS["safety"]["cache_dir"],
-        cache_meta_path=PATHS["safety"]["cache_meta"],
-    )
+# %%
+def load_cached_dataset(cache_dir: Path) -> DatasetDict:
+    split_files = {path.stem: str(path) for path in sorted(cache_dir.glob("*.parquet"))}
+    if not split_files:
+        raise FileNotFoundError(f"No parquet splits found in {cache_dir}")
+    return load_dataset("parquet", data_files=split_files)
 
-    print(f"  Known labels: {len(known_categories)}")
-    print(f"  Train: {len(ds['train']):,}")
-    print(f"  Val:   {len(ds['val']):,}")
-    print(f"  Test:  {len(ds['test']):,}")
 
-    print(f"\nLoading tokenizer: {CONFIG['model_name']}")
-    tokenizer = AutoTokenizer.from_pretrained(CONFIG["model_name"])
-
-    def tokenize(batch):
-        enc = tokenizer(
-            batch["text"],
-            truncation=True,
-            max_length=CONFIG["max_length"],
-            padding="max_length",
-        )
-        enc["labels"] = batch["labels"]
-        return enc
-
-    for split_name in ("train", "val", "test"):
-        ds[split_name] = ds[split_name].map(tokenize, batched=True, remove_columns=ds[split_name].column_names)
-        ds[split_name].set_format("torch", columns=["input_ids", "attention_mask", "labels"])
-
-    print(f"Loading model: {CONFIG['model_name']}")
-    model = AutoModelForSequenceClassification.from_pretrained(
-        CONFIG["model_name"],
-        num_labels=len(known_categories),
-        id2label=id2label,
-        label2id=label2id,
-        problem_type="multi_label_classification",
-    )
-
-    class WeightedBCETrainer(Trainer):
-        """Trainer that uses BCEWithLogitsLoss with optional pos_weight."""
-
-        def __init__(self, *args, pos_weight: float | None = None, **kwargs):
-            super().__init__(*args, **kwargs)
-            if pos_weight is not None:
-                pw = torch.full((len(known_categories),), pos_weight)
-                self._loss_fn = nn.BCEWithLogitsLoss(pos_weight=pw)
-            else:
-                self._loss_fn = nn.BCEWithLogitsLoss()
-
-        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-            labels = inputs.pop("labels").float()
-            outputs = model(**inputs)
-            loss = self._loss_fn(outputs.logits.to(labels.device), labels)
-            return (loss, outputs) if return_outputs else loss
-
-    threshold = CONFIG["threshold"]
-
-    def compute_metrics(eval_pred):
-        logits, labels = eval_pred
-        probs = 1 / (1 + np.exp(-logits))
-        preds = (probs >= threshold).astype(int)
-        labels = labels.astype(int)
-
-        micro_f1 = f1_score(labels, preds, average="micro", zero_division=0)
-        macro_f1 = f1_score(labels, preds, average="macro", zero_division=0)
-        precision = precision_score(labels, preds, average="micro", zero_division=0)
-        recall = recall_score(labels, preds, average="micro", zero_division=0)
-        per_label_f1 = f1_score(labels, preds, average=None, zero_division=0)
-        per_label_report = {f"f1_{known_categories[i]}": float(per_label_f1[i]) for i in range(len(known_categories))}
-
-        return {
-            "micro_f1": micro_f1,
-            "macro_f1": macro_f1,
-            "precision": precision,
-            "recall": recall,
-            **per_label_report,
-        }
-
-    training_args = TrainingArguments(
+def make_training_args() -> TrainingArguments:
+    return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
         learning_rate=CONFIG["learning_rate"],
@@ -148,25 +70,99 @@ def main() -> None:
         label_names=["labels"],
     )
 
-    trainer = WeightedBCETrainer(
-        model=model,
-        args=training_args,
-        train_dataset=ds["train"],
-        eval_dataset=ds["val"],
-        tokenizer=tokenizer,
-        compute_metrics=compute_metrics,
-        pos_weight=CONFIG["bce_pos_weight"],
-    )
 
-    trainer.train()
-    print("\nEvaluating on test split ...")
-    print(trainer.evaluate(ds["test"]))
+# %%
+if not TOKENIZED_CACHE_META.exists():
+    raise RuntimeError("Tokenized safety cache not found. Run the build script first.")
 
-    trainer.save_model(CONFIG["output_dir"])
-    tokenizer.save_pretrained(CONFIG["output_dir"])
-    print(f"\nModel saved to: {CONFIG['output_dir']}")
+with TOKENIZED_CACHE_META.open(encoding="utf-8") as f:
+    meta = json.load(f)
+
+if meta.get("model_name") != CONFIG["model_name"] or meta.get("max_length") != CONFIG["max_length"]:
+    raise RuntimeError("Safety cache metadata does not match the current config.")
+
+ds = load_cached_dataset(TOKENIZED_CACHE_DIR)
+known_categories = list(meta.get("known_categories", []))
+label2id = dict(meta.get("label2id", {}))
+id2label = {int(k): v for k, v in meta.get("id2label", {}).items()}
+
+print(f"  Known labels: {len(known_categories)}")
+print(f"  Train: {len(ds['train']):,}")
+print(f"  Val:   {len(ds['val']):,}")
+print(f"  Test:  {len(ds['test']):,}")
+
+for split_name in ("train", "val", "test"):
+    ds[split_name].set_format("torch", columns=["input_ids", "attention_mask", "labels"])
 
 
-if __name__ == "__main__":
-    main()
+# %%
+print(f"Loading model: {CONFIG['model_name']}")
+model = AutoModelForSequenceClassification.from_pretrained(
+    CONFIG["model_name"],
+    num_labels=len(known_categories),
+    id2label=id2label,
+    label2id=label2id,
+    problem_type="multi_label_classification",
+)
 
+
+class WeightedBCETrainer(Trainer):
+    """Trainer that uses BCEWithLogitsLoss with optional pos_weight."""
+
+    def __init__(self, *args, pos_weight: float | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if pos_weight is not None:
+            pw = torch.full((len(known_categories),), pos_weight)
+            self._loss_fn = nn.BCEWithLogitsLoss(pos_weight=pw)
+        else:
+            self._loss_fn = nn.BCEWithLogitsLoss()
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        labels = inputs.pop("labels").float()
+        outputs = model(**inputs)
+        loss = self._loss_fn(outputs.logits.to(labels.device), labels)
+        return (loss, outputs) if return_outputs else loss
+
+
+threshold = CONFIG["threshold"]
+
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    probs = 1 / (1 + np.exp(-logits))
+    preds = (probs >= threshold).astype(int)
+    labels = labels.astype(int)
+
+    micro_f1 = f1_score(labels, preds, average="micro", zero_division=0)
+    macro_f1 = f1_score(labels, preds, average="macro", zero_division=0)
+    precision = precision_score(labels, preds, average="micro", zero_division=0)
+    recall = recall_score(labels, preds, average="micro", zero_division=0)
+    per_label_f1 = f1_score(labels, preds, average=None, zero_division=0)
+    per_label_report = {f"f1_{known_categories[i]}": float(per_label_f1[i]) for i in range(len(known_categories))}
+
+    return {
+        "micro_f1": micro_f1,
+        "macro_f1": macro_f1,
+        "precision": precision,
+        "recall": recall,
+        **per_label_report,
+    }
+
+
+trainer = WeightedBCETrainer(
+    model=model,
+    args=make_training_args(),
+    train_dataset=ds["train"],
+    eval_dataset=ds["val"],
+    compute_metrics=compute_metrics,
+    pos_weight=CONFIG["bce_pos_weight"],
+)
+
+
+# %%
+trainer.train()
+print("\nEvaluating on test split ...")
+print(trainer.evaluate(ds["test"]))
+
+trainer.save_model(CONFIG["output_dir"])
+print(f"\nModel saved to: {CONFIG['output_dir']}")

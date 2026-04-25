@@ -3,8 +3,12 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset, DatasetDict, concatenate_datasets
+from transformers import AutoTokenizer
 
+from shared.cache import save_dataset_cache, load_dataset_cache
+from shared.paths import PATHS
+from shared.tokenization import tokenize_dataset_dict
 from shared.fetch import load_mnli_dataset, load_xnli_dataset
 
 LABEL2ID = {"entailment": 0, "neutral": 1, "contradiction": 2}
@@ -61,9 +65,7 @@ def build_xnli_datasets(
     *,
     seed: int = 42,
 ):
-    """
-    Returns (train_dataset, val_dataset) as HF Datasets.
-    """
+    """Returns (train_dataset, val_dataset) as HF Datasets."""
     rng = random.Random(seed)
 
     if pool_size is None:
@@ -165,3 +167,84 @@ def build_nli_datasets(
     eval_dataset = concatenate_datasets([mnli_val, xnli_val]).shuffle(seed=seed)
     return train_dataset, eval_dataset
 
+
+def build_and_cache_nli_dataset(
+    *,
+    model_name: str,
+    max_length: int,
+    mnli_train_size=None,
+    mnli_val_size=None,
+    xnli_pool_size=None,
+    xnli_val_size=400,
+    same_lang_pct=50,
+    cross_lang_pct=50,
+    xnli_languages=None,
+    seed: int = 42,
+    force_rebuild: bool = False,
+) -> tuple[Dataset, Dataset, dict[str, Any]]:
+    raw_meta = {
+        "cache_version": 1,
+        "dataset_kind": "nli_raw",
+        "mnli_train_size": mnli_train_size,
+        "mnli_val_size": mnli_val_size,
+        "xnli_pool_size": xnli_pool_size,
+        "xnli_val_size": xnli_val_size,
+        "same_lang_pct": same_lang_pct,
+        "cross_lang_pct": cross_lang_pct,
+        "xnli_languages": xnli_languages,
+        "seed": seed,
+    }
+    tokenized_meta = {
+        "cache_version": 1,
+        "dataset_kind": "nli_tokenized",
+        "model_name": model_name,
+        "max_length": max_length,
+        "mnli_train_size": mnli_train_size,
+        "mnli_val_size": mnli_val_size,
+        "xnli_pool_size": xnli_pool_size,
+        "xnli_val_size": xnli_val_size,
+        "same_lang_pct": same_lang_pct,
+        "cross_lang_pct": cross_lang_pct,
+        "xnli_languages": xnli_languages,
+        "seed": seed,
+    }
+    raw_cache_dir = PATHS["nli"]["raw_cache_dir"]
+    raw_cache_meta = PATHS["nli"]["raw_cache_meta"]
+    tokenized_cache_dir = PATHS["nli"]["tokenized_cache_dir"]
+    tokenized_cache_meta = PATHS["nli"]["tokenized_cache_meta"]
+
+    if not force_rebuild:
+        loaded = load_dataset_cache(tokenized_cache_dir, meta_path=tokenized_cache_meta, expected_meta=tokenized_meta)
+        if loaded is not None:
+            return loaded["train"], loaded["val"], tokenized_meta
+
+    train_dataset, eval_dataset = build_nli_datasets(
+        mnli_train_size=mnli_train_size,
+        mnli_val_size=mnli_val_size,
+        xnli_pool_size=xnli_pool_size,
+        xnli_val_size=xnli_val_size,
+        same_lang_pct=same_lang_pct,
+        cross_lang_pct=cross_lang_pct,
+        xnli_languages=xnli_languages,
+        seed=seed,
+    )
+    raw_dataset = DatasetDict({"train": train_dataset, "val": eval_dataset})
+    save_dataset_cache(raw_dataset, raw_cache_dir, meta_path=raw_cache_meta, meta=raw_meta)
+
+    tokenized = tokenize_dataset_dict(
+        raw_dataset,
+        tokenizer=AutoTokenizer.from_pretrained(model_name),
+        kind="pair",
+        max_length=max_length,
+        text_columns=("premise", "hypothesis"),
+    )
+    tokenized = DatasetDict(
+        {
+            split_name: split.remove_columns(
+                [col for col in split.column_names if col not in {"input_ids", "attention_mask", "label"}]
+            )
+            for split_name, split in tokenized.items()
+        }
+    )
+    save_dataset_cache(tokenized, tokenized_cache_dir, meta_path=tokenized_cache_meta, meta=tokenized_meta)
+    return tokenized["train"], tokenized["val"], tokenized_meta

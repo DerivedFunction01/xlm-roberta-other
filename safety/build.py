@@ -7,12 +7,14 @@ from typing import Any
 
 import numpy as np
 from datasets import DatasetDict
+from transformers import AutoTokenizer
 from sklearn.preprocessing import MultiLabelBinarizer
 
 from shared.building import rows_to_dataset_dict
 from shared.cache import load_dataset_cache, save_dataset_cache
 from shared.fetch import load_safety_guard_dataset
 from shared.paths import PATHS
+from shared.tokenization import tokenize_dataset_dict
 from text_utils.mutations import MutationConfig, TextMutator
 
 REDACTED_TOKEN = "REDACTED"
@@ -180,8 +182,8 @@ def build_safety_classifier_dataset(
     cache_dir: str | None = None,
     cache_meta_path: str | None = None,
 ) -> tuple[DatasetDict, list[str], dict[str, int], dict[int, str], dict[str, Any]]:
-    cache_dir = cache_dir or PATHS["safety"]["cache_dir"]
-    cache_meta_path = cache_meta_path or PATHS["safety"]["cache_meta"]
+    cache_dir = cache_dir or PATHS["safety"]["raw_cache_dir"]
+    cache_meta_path = cache_meta_path or PATHS["safety"]["raw_cache_meta"]
     expected_meta = {
         "cache_version": SAFETY_CACHE_VERSION,
         "dataset_name": "nvidia/Nemotron-Safety-Guard-Dataset-v3",
@@ -238,3 +240,94 @@ def build_safety_classifier_dataset(
     save_dataset_cache(dataset, cache_dir, meta_path=cache_meta_path, meta=meta)
     return dataset, known_categories, label2id, id2label, meta
 
+
+def build_and_cache_safety_dataset(
+    *,
+    model_name: str,
+    max_length: int,
+    dataset_split: str = "train",
+    drop_redacted: bool = True,
+    augment: bool = True,
+    min_label_count: int = 10,
+    val_size: float = 0.05,
+    test_size: float = 0.05,
+    seed: int = 42,
+    force_rebuild: bool = False,
+) -> tuple[DatasetDict, list[str], dict[str, int], dict[int, str], dict[str, Any]]:
+    raw_cache_dir = PATHS["safety"]["raw_cache_dir"]
+    raw_cache_meta = PATHS["safety"]["raw_cache_meta"]
+    tokenized_cache_dir = PATHS["safety"]["tokenized_cache_dir"]
+    tokenized_cache_meta = PATHS["safety"]["tokenized_cache_meta"]
+
+    raw_meta = {
+        "cache_version": SAFETY_CACHE_VERSION,
+        "dataset_kind": "safety_raw",
+        "dataset_split": dataset_split,
+        "drop_redacted": drop_redacted,
+        "augment": augment,
+        "min_label_count": min_label_count,
+        "val_size": val_size,
+        "test_size": test_size,
+        "seed": seed,
+    }
+
+    tokenized_meta = {
+        "cache_version": SAFETY_CACHE_VERSION,
+        "dataset_kind": "safety_tokenized",
+        "model_name": model_name,
+        "max_length": max_length,
+        "dataset_split": dataset_split,
+        "drop_redacted": drop_redacted,
+        "augment": augment,
+        "min_label_count": min_label_count,
+        "val_size": val_size,
+        "test_size": test_size,
+        "seed": seed,
+    }
+
+    if not force_rebuild:
+        loaded = load_dataset_cache(tokenized_cache_dir, meta_path=tokenized_cache_meta, expected_meta=tokenized_meta)
+        if loaded is not None:
+            with open(tokenized_cache_meta, encoding="utf-8") as f:
+                meta = json.load(f)
+            known_categories = list(meta.get("known_categories", []))
+            label2id = dict(meta.get("label2id", {}))
+            id2label = {int(k): v for k, v in meta.get("id2label", {}).items()} if isinstance(meta.get("id2label"), dict) else {}
+            return loaded, known_categories, label2id, id2label, meta
+
+    raw_dataset, known_categories, label2id, id2label, meta = build_safety_classifier_dataset(
+        dataset_split=dataset_split,
+        drop_redacted=drop_redacted,
+        augment=augment,
+        min_label_count=min_label_count,
+        val_size=val_size,
+        test_size=test_size,
+        seed=seed,
+        force_rebuild=force_rebuild,
+        cache_dir=raw_cache_dir,
+        cache_meta_path=raw_cache_meta,
+    )
+
+    tokenized = tokenize_dataset_dict(
+        raw_dataset,
+        tokenizer=AutoTokenizer.from_pretrained(model_name),
+        kind="text",
+        max_length=max_length,
+        text_columns=("text",),
+    )
+    tokenized = DatasetDict(
+        {
+            split_name: split.remove_columns([col for col in split.column_names if col not in {"input_ids", "attention_mask", "labels"}])
+            for split_name, split in tokenized.items()
+        }
+    )
+    tokenized_meta = {
+        **tokenized_meta,
+        "known_categories": known_categories,
+        "label2id": label2id,
+        "id2label": id2label,
+        "num_examples": meta.get("num_examples"),
+        "split_sizes": {split_name: len(split) for split_name, split in tokenized.items()},
+    }
+    save_dataset_cache(tokenized, tokenized_cache_dir, meta_path=tokenized_cache_meta, meta=tokenized_meta)
+    return tokenized, known_categories, label2id, id2label, tokenized_meta

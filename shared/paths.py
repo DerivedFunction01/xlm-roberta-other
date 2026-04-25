@@ -11,19 +11,24 @@ PATHS: dict[str, Any] = {
     "root_dir": str(ROOT_DIR),
     "cache_root": str(CACHE_ROOT),
     "nli": {
-        "cache_dir": str(CACHE_ROOT / "nli"),
-        "cache_meta": str(CACHE_ROOT / "nli" / "dataset.meta.json"),
+        "raw_cache_dir": str(CACHE_ROOT / "nli" / "raw"),
+        "raw_cache_meta": str(CACHE_ROOT / "nli" / "raw" / "dataset.meta.json"),
+        "tokenized_cache_dir": str(CACHE_ROOT / "nli" / "tokenized"),
+        "tokenized_cache_meta": str(CACHE_ROOT / "nli" / "tokenized" / "dataset.meta.json"),
     },
     "safety": {
-        "cache_dir": str(CACHE_ROOT / "safety"),
-        "cache_meta": str(CACHE_ROOT / "safety" / "dataset.meta.json"),
+        "raw_cache_dir": str(CACHE_ROOT / "safety" / "raw"),
+        "raw_cache_meta": str(CACHE_ROOT / "safety" / "raw" / "dataset.meta.json"),
+        "tokenized_cache_dir": str(CACHE_ROOT / "safety" / "tokenized"),
+        "tokenized_cache_meta": str(CACHE_ROOT / "safety" / "tokenized" / "dataset.meta.json"),
     },
 }
 
 for path in [
     CACHE_ROOT,
-    Path(PATHS["nli"]["cache_dir"]),
-    Path(PATHS["safety"]["cache_dir"]),
+    Path(PATHS["nli"]["raw_cache_dir"]),
+    Path(PATHS["nli"]["tokenized_cache_dir"]),
+    Path(PATHS["safety"]["raw_cache_dir"]),
+    Path(PATHS["safety"]["tokenized_cache_dir"]),
 ]:
     path.mkdir(parents=True, exist_ok=True)
-
