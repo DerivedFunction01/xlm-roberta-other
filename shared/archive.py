@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -17,6 +19,26 @@ ARCHIVE_NAME_TEMPLATE = "xlm_roberta_other_{subdir_name}_cache.zip"
 
 def archive_path_for(subdir_name: str, artifact_root: Path = ARTIFACT_ROOT) -> Path:
     return artifact_root / ARCHIVE_NAME_TEMPLATE.format(subdir_name=subdir_name)
+
+
+def _archive_extractor() -> tuple[list[str], str]:
+    for candidate in ("7z", "7za", "unzip"):
+        executable = shutil.which(candidate)
+        if executable is not None:
+            return [executable], candidate
+    raise FileNotFoundError("No supported archive extractor found. Install 7z or unzip.")
+
+
+def _extract_with_native_tool(archive_path: Path, destination_dir: Path) -> None:
+    extractor, tool_name = _archive_extractor()
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    if tool_name in {"7z", "7za"}:
+        cmd = [*extractor, "x", "-y", f"-o{destination_dir}", str(archive_path)]
+    else:
+        cmd = [*extractor, "-o", str(archive_path), "-d", str(destination_dir)]
+
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def ensure_cache_archive_extracted(
@@ -42,7 +64,7 @@ def ensure_cache_archive_extracted(
             extracted_path = (cache_root / info.filename).resolve()
             if extracted_path != cache_root and cache_root not in extracted_path.parents:
                 raise ValueError(f"Unsafe archive member path: {info.filename}")
-        archive.extractall(cache_root)
+        _extract_with_native_tool(archive_path, cache_root)
 
     if load_dataset_cache(tokenized_cache_dir) is None:
         raise RuntimeError(f"Archive extraction did not restore a usable cache: {tokenized_cache_dir}")
