@@ -133,7 +133,7 @@ def make_training_args() -> TrainingArguments:
         metric_for_best_model="binary_f1",
         greater_is_better=True,
         seed=CONFIG["seed"],
-        report_to="none",
+        report_to="tensorboard",
         label_names=["labels", "binary_label"],
     )
 
