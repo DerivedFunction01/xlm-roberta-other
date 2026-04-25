@@ -142,10 +142,10 @@ known_categories = list(meta.get("known_categories", []))
 if not known_categories:
     raise RuntimeError("Safety cache metadata did not include any category labels.")
 
-label2id = dict(meta.get("label2id", {}))
-id2label = {int(k): v for k, v in meta.get("id2label", {}).items()}
-binary_label2id = dict(meta.get("binary_label2id", {"safe": 0, "unsafe": 1}))
-binary_id2label = {int(k): v for k, v in meta.get("binary_id2label", {0: "safe", 1: "unsafe"}).items()}
+label2id = {category: idx for idx, category in enumerate(known_categories)}
+id2label = {idx: category for category, idx in label2id.items()}
+binary_label2id = {"safe": 0, "unsafe": 1}
+binary_id2label = {0: "safe", 1: "unsafe"}
 
 print(f"  Known categories: {len(known_categories)}")
 print(f"  Train: {len(ds['train']):,}")
