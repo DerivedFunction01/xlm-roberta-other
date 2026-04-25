@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -52,6 +55,33 @@ def _example_from_text(
         "tag": tag,
         "source_id": source_id,
     }
+
+
+def _chunked(seq: list[tuple[int, dict[str, Any]]], chunk_size: int) -> list[list[tuple[int, dict[str, Any]]]]:
+    return [seq[i : i + chunk_size] for i in range(0, len(seq), chunk_size)]
+
+
+def _build_flat_examples_chunk(
+    chunk: list[tuple[int, dict[str, Any]]],
+    *,
+    drop_redacted: bool,
+    augment: bool,
+    mutator: TextMutator | None,
+    seed: int,
+) -> list[dict[str, Any]]:
+    chunk_examples: list[dict[str, Any]] = []
+    for row_index, row in chunk:
+        rng = random.Random(seed + row_index)
+        chunk_examples.extend(
+            row_to_examples(
+                row,
+                drop_redacted=drop_redacted,
+                augment=augment,
+                mutator=mutator,
+                rng=rng,
+            )
+        )
+    return chunk_examples
 
 
 def row_to_examples(
@@ -134,18 +164,41 @@ def build_flat_examples(
     mutator: TextMutator | None = None,
     seed: int = 42,
 ) -> list[dict[str, Any]]:
-    rng = random.Random(seed)
-    flat_examples: list[dict[str, Any]] = []
-    for row in tqdm(raw_rows, desc="Building safety examples", unit="row"):
-        flat_examples.extend(
-            row_to_examples(
-                row,
-                drop_redacted=drop_redacted,
-                augment=augment,
-                mutator=mutator,
-                rng=rng,
+    indexed_rows = list(enumerate(raw_rows))
+    if len(indexed_rows) < 1000 or (os.cpu_count() or 1) <= 1:
+        rng = random.Random(seed)
+        flat_examples: list[dict[str, Any]] = []
+        for _, row in tqdm(indexed_rows, desc="Building safety examples", unit="row"):
+            flat_examples.extend(
+                row_to_examples(
+                    row,
+                    drop_redacted=drop_redacted,
+                    augment=augment,
+                    mutator=mutator,
+                    rng=rng,
+                )
             )
+        return flat_examples
+
+    workers = max(1, (os.cpu_count() or 2) - 1)
+    chunk_size = max(1, len(indexed_rows) // (workers * 4))
+    chunks = _chunked(indexed_rows, chunk_size)
+    flat_examples = []
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        chunk_worker = partial(
+            _build_flat_examples_chunk,
+            drop_redacted=drop_redacted,
+            augment=augment,
+            mutator=mutator,
+            seed=seed,
         )
+        for chunk_examples in tqdm(
+            executor.map(chunk_worker, chunks, chunksize=1),
+            total=len(chunks),
+            desc="Building safety examples",
+            unit="chunk",
+        ):
+            flat_examples.extend(chunk_examples)
     return flat_examples
 
 
