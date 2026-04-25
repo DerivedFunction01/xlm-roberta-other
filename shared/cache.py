@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -32,16 +33,30 @@ def save_dataset_cache(
     if cache_dir.exists():
         if not overwrite:
             raise FileExistsError(f"Refusing to overwrite existing cache dir: {cache_dir}")
-        shutil.rmtree(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
+        existing_splits = list(cache_dir.glob("*.parquet"))
+        if existing_splits:
+            raise FileExistsError(
+                f"Refusing to overwrite existing cache dir with different data: {cache_dir}"
+            )
 
-    for split_name, split in dataset.items():
-        frame = split.to_pandas()
-        frame.to_parquet(cache_dir / f"{split_name}.parquet", index=False)
+    temp_dir = cache_dir.parent / f".{cache_dir.name}.tmp-{uuid.uuid4().hex}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
-    if meta is not None:
-        resolved_meta_path = Path(meta_path) if meta_path is not None else cache_dir / DEFAULT_CACHE_META_NAME
-        write_json_atomic(resolved_meta_path, meta)
+    try:
+        for split_name, split in dataset.items():
+            frame = split.to_pandas()
+            frame.to_parquet(temp_dir / f"{split_name}.parquet", index=False)
+
+        if meta is not None:
+            resolved_meta_path = Path(meta_path) if meta_path is not None else temp_dir / DEFAULT_CACHE_META_NAME
+            write_json_atomic(resolved_meta_path, meta)
+
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        temp_dir.replace(cache_dir)
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
 
 
 def load_dataset_cache(
@@ -81,4 +96,3 @@ def load_dataset_cache(
     except Exception:
         return None
     return DatasetDict(splits)
-
