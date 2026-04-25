@@ -97,16 +97,22 @@ def compute_step_interval(train_size: int, *, checkpoints_per_epoch: int) -> int
 
 
 class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
-    def __init__(self, config: XLMRobertaConfig, category_pos_weight: torch.Tensor | None = None):
+    def __init__(
+        self, config: XLMRobertaConfig, category_pos_weight: torch.Tensor | None = None
+    ):
         super().__init__(config)
         self.roberta = XLMRobertaModel(config, add_pooling_layer=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.binary_classifier = nn.Linear(config.hidden_size, 1)
-        self.category_classifier = nn.Linear(config.hidden_size, config.num_category_labels)
+        self.category_classifier = nn.Linear(
+            config.hidden_size, config.num_category_labels
+        )
         if category_pos_weight is None:
             self.register_buffer("category_pos_weight", None, persistent=False)
         else:
-            self.register_buffer("category_pos_weight", category_pos_weight.float(), persistent=False)
+            self.register_buffer(
+                "category_pos_weight", category_pos_weight.float(), persistent=False
+            )
         self.post_init()
 
     def forward(
@@ -134,11 +140,10 @@ class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
         loss = None
         if labels is not None and binary_label is not None:
             binary_loss = nn.functional.binary_cross_entropy_with_logits(
-                binary_logits.float(),
-                binary_label.float(),
+                binary_logits, binary_label.float()
             )
             category_loss = nn.functional.binary_cross_entropy_with_logits(
-                category_logits.float(),
+                category_logits,
                 labels.float(),
                 pos_weight=self.category_pos_weight,
             )
@@ -152,7 +157,9 @@ class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
         )
 
 
-def make_training_args(*, warmup_steps: int, eval_steps: int, save_steps: int) -> TrainingArguments:
+def make_training_args(
+    *, warmup_steps: int, eval_steps: int, save_steps: int
+) -> TrainingArguments:
     return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
@@ -176,7 +183,7 @@ def make_training_args(*, warmup_steps: int, eval_steps: int, save_steps: int) -
         seed=CONFIG["seed"],
         report_to="tensorboard",
         label_names=["labels", "binary_label"],
-        push_to_hub=True
+        push_to_hub=True,
     )
 
 
@@ -187,7 +194,10 @@ if not TOKENIZED_CACHE_META.exists():
 with TOKENIZED_CACHE_META.open(encoding="utf-8") as f:
     meta = json.load(f)
 
-if meta.get("model_name") != CONFIG["model_name"] or meta.get("max_length") != CONFIG["max_length"]:
+if (
+    meta.get("model_name") != CONFIG["model_name"]
+    or meta.get("max_length") != CONFIG["max_length"]
+):
     raise RuntimeError("Safety cache metadata does not match the current config.")
 
 ds = load_cached_dataset(TOKENIZED_CACHE_DIR)
@@ -195,8 +205,14 @@ known_categories = list(meta.get("known_categories", []))
 if not known_categories:
     raise RuntimeError("Safety cache metadata did not include any category labels.")
 
-label2id = dict(meta.get("label2id", {})) or {category: idx for idx, category in enumerate(known_categories)}
-id2label = {int(k): v for k, v in meta.get("id2label", {}).items()} if isinstance(meta.get("id2label"), dict) else {}
+label2id = dict(meta.get("label2id", {})) or {
+    category: idx for idx, category in enumerate(known_categories)
+}
+id2label = (
+    {int(k): v for k, v in meta.get("id2label", {}).items()}
+    if isinstance(meta.get("id2label"), dict)
+    else {}
+)
 if not id2label:
     id2label = {idx: category for category, idx in label2id.items()}
 binary_label2id = {"safe": 0, "unsafe": 1}
@@ -220,7 +236,9 @@ if binary_counts:
             print(f"    {label}: {count} ({rate:.3%})")
 if category_counts:
     print("  Top category counts:")
-    for label, count in sorted(category_counts.items(), key=lambda item: item[1], reverse=True)[:10]:
+    for label, count in sorted(
+        category_counts.items(), key=lambda item: item[1], reverse=True
+    )[:10]:
         rate = meta.get("category_positive_rates", {}).get(label)
         if rate is None:
             print(f"    {label}: {count}")
@@ -245,14 +263,20 @@ print(
     f"{float(category_pos_weight.min()):.2f} .. {float(category_pos_weight.max()):.2f}"
 )
 warmup_steps = compute_warmup_steps(len(ds["train"]))
-eval_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["evals_per_epoch"])
-save_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["saves_per_epoch"])
+eval_interval = compute_step_interval(
+    len(ds["train"]), checkpoints_per_epoch=CONFIG["evals_per_epoch"]
+)
+save_interval = compute_step_interval(
+    len(ds["train"]), checkpoints_per_epoch=CONFIG["saves_per_epoch"]
+)
 print(f"  Warmup steps: {warmup_steps}")
 print(f"  Eval interval: {eval_interval}")
 print(f"  Save interval: {save_interval}")
 
 for split_name in ("train", "val", "test"):
-    ds[split_name].set_format("torch", columns=["input_ids", "attention_mask", "labels", "binary_label"])
+    ds[split_name].set_format(
+        "torch", columns=["input_ids", "attention_mask", "labels", "binary_label"]
+    )
 
 
 # %%
@@ -296,11 +320,21 @@ def compute_metrics(eval_pred):
     binary_f1 = f1_score(binary_labels, binary_preds, zero_division=0)
     binary_precision = precision_score(binary_labels, binary_preds, zero_division=0)
     binary_recall = recall_score(binary_labels, binary_preds, zero_division=0)
-    category_micro_f1 = f1_score(category_labels, category_preds, average="micro", zero_division=0)
-    category_macro_f1 = f1_score(category_labels, category_preds, average="macro", zero_division=0)
-    category_precision = precision_score(category_labels, category_preds, average="micro", zero_division=0)
-    category_recall = recall_score(category_labels, category_preds, average="micro", zero_division=0)
-    per_category_f1 = f1_score(category_labels, category_preds, average=None, zero_division=0)
+    category_micro_f1 = f1_score(
+        category_labels, category_preds, average="micro", zero_division=0
+    )
+    category_macro_f1 = f1_score(
+        category_labels, category_preds, average="macro", zero_division=0
+    )
+    category_precision = precision_score(
+        category_labels, category_preds, average="micro", zero_division=0
+    )
+    category_recall = recall_score(
+        category_labels, category_preds, average="micro", zero_division=0
+    )
+    per_category_f1 = f1_score(
+        category_labels, category_preds, average=None, zero_division=0
+    )
 
     per_category_report = {
         f"f1_{known_categories[i]}": float(per_category_f1[i])
