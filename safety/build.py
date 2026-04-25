@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from shared.building import rows_to_dataset_dict
-from shared.cache import load_dataset_cache, save_dataset_cache
+from shared.cache import ensure_cache_meta, load_dataset_cache, save_dataset_cache
 from shared.fetch import load_safety_guard_dataset
 from shared.paths import PATHS
 from shared.tokenization import tokenize_dataset_dict
@@ -317,6 +317,19 @@ def build_and_cache_safety_dataset(
     binary_label2id = {"safe": 0, "unsafe": 1}
     binary_id2label = {0: "safe", 1: "unsafe"}
 
+    raw_dataset, known_categories, label2id, id2label, raw_meta_state = build_safety_classifier_dataset(
+        dataset_split=dataset_split,
+        drop_redacted=drop_redacted,
+        augment=augment,
+        min_label_count=min_label_count,
+        val_size=val_size,
+        test_size=test_size,
+        seed=seed,
+        force_rebuild=force_rebuild,
+        cache_dir=raw_cache_dir,
+        cache_meta_path=raw_cache_meta,
+    )
+
     raw_meta = {
         "cache_version": SAFETY_CACHE_VERSION,
         "dataset_kind": "safety_raw",
@@ -343,11 +356,14 @@ def build_and_cache_safety_dataset(
         "val_size": val_size,
         "test_size": test_size,
         "seed": seed,
+        "label2id": label2id,
+        "id2label": id2label,
         "binary_label2id": binary_label2id,
         "binary_id2label": binary_id2label,
     }
 
     if not force_rebuild:
+        ensure_cache_meta(tokenized_cache_dir, meta_path=tokenized_cache_meta, meta=tokenized_meta)
         loaded = load_dataset_cache(tokenized_cache_dir, meta_path=tokenized_cache_meta, expected_meta=tokenized_meta)
         if loaded is not None:
             with open(tokenized_cache_meta, encoding="utf-8") as f:
@@ -356,19 +372,6 @@ def build_and_cache_safety_dataset(
             label2id = dict(meta.get("label2id", {}))
             id2label = {int(k): v for k, v in meta.get("id2label", {}).items()} if isinstance(meta.get("id2label"), dict) else {}
             return loaded, known_categories, label2id, id2label, meta
-
-    raw_dataset, known_categories, label2id, id2label, meta = build_safety_classifier_dataset(
-        dataset_split=dataset_split,
-        drop_redacted=drop_redacted,
-        augment=augment,
-        min_label_count=min_label_count,
-        val_size=val_size,
-        test_size=test_size,
-        seed=seed,
-        force_rebuild=force_rebuild,
-        cache_dir=raw_cache_dir,
-        cache_meta_path=raw_cache_meta,
-    )
 
     tokenized = tokenize_dataset_dict(
         raw_dataset,
@@ -392,7 +395,7 @@ def build_and_cache_safety_dataset(
         "id2label": id2label,
         "binary_label2id": binary_label2id,
         "binary_id2label": binary_id2label,
-        "num_examples": meta.get("num_examples"),
+        "num_examples": raw_meta_state.get("num_examples"),
         "split_sizes": {split_name: len(split) for split_name, split in tokenized.items()},
     }
     save_dataset_cache(tokenized, tokenized_cache_dir, meta_path=tokenized_cache_meta, meta=tokenized_meta)

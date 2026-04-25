@@ -20,6 +20,25 @@ def write_json_atomic(path: str | Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
+def ensure_cache_meta(
+    cache_dir: str | Path,
+    *,
+    meta_path: str | Path | None = None,
+    meta: dict[str, Any],
+) -> bool:
+    """Write a missing metadata file for an existing cache directory."""
+    cache_dir = Path(cache_dir)
+    if not cache_dir.exists():
+        return False
+
+    resolved_meta_path = Path(meta_path) if meta_path is not None else cache_dir / DEFAULT_CACHE_META_NAME
+    if resolved_meta_path.exists():
+        return False
+
+    write_json_atomic(resolved_meta_path, meta)
+    return True
+
+
 def save_dataset_cache(
     dataset: DatasetDict,
     cache_dir: str | Path,
