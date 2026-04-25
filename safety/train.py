@@ -40,6 +40,7 @@ CONFIG = {
     "dataloader_num_workers": 4,
     "seed": 42,
     "threshold": 0.5,
+    "max_category_pos_weight": 50.0,
 }
 
 WARMUP_RATIO = 0.1
@@ -229,6 +230,7 @@ category_pos_weight = torch.tensor(
     ],
     dtype=torch.float32,
 )
+category_pos_weight = torch.clamp(category_pos_weight, max=CONFIG["max_category_pos_weight"])
 print(
     "  Category pos_weight range: "
     f"{float(category_pos_weight.min()):.2f} .. {float(category_pos_weight.max()):.2f}"
