@@ -10,13 +10,13 @@
 CONFIG = {
     # ── Model ──────────────────────────────────────────────────────────────
     "model_name": "xlm-roberta-base",
-    "output_dir": "./xlmr-nli-out",
+    "output_dir": "./xlmr-xnli-mnli",
 
     # ── Data sizes ─────────────────────────────────────────────────────────
     # Set to None to use the full split
-    "mnli_train_size":      2000,   # rows sampled from MNLI train
-    "mnli_val_size":        500,    # rows sampled from MNLI validation_matched
-    "xnli_pool_size":       2400,   # total XNLI rows to draw from before train/val split
+    "mnli_train_size":      None,   # rows sampled from MNLI train
+    "mnli_val_size":        None,    # rows sampled from MNLI validation_matched
+    "xnli_pool_size":       None,   # total XNLI rows to draw from before train/val split
     "xnli_val_size":        400,    # how many of those go to validation
 
     # ── XNLI language mix ──────────────────────────────────────────────────
@@ -237,6 +237,11 @@ def build_xnli_datasets(flat_ds, pool_size, val_size, same_pct, cross_pct, langs
     cross_pct  : % of pool that should be cross-language pairs
     """
     rng = random.Random(seed)
+
+    if pool_size is None:
+        pool_size = len(flat_ds)
+    if val_size is None:
+        raise ValueError("xnli_val_size must be set to an integer")
 
     n_same  = int(pool_size * same_pct  / 100)
     n_cross = int(pool_size * cross_pct / 100)
