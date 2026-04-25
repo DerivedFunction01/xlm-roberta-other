@@ -67,7 +67,8 @@ def save_dataset_cache(
             frame.to_parquet(temp_dir / f"{split_name}.parquet", index=False)
 
         if meta is not None:
-            resolved_meta_path = Path(meta_path) if meta_path is not None else temp_dir / DEFAULT_CACHE_META_NAME
+            meta_name = Path(meta_path).name if meta_path is not None else DEFAULT_CACHE_META_NAME
+            resolved_meta_path = temp_dir / meta_name
             write_json_atomic(resolved_meta_path, meta)
 
         if cache_dir.exists():
@@ -90,6 +91,10 @@ def load_dataset_cache(
         return None
 
     resolved_meta_path = Path(meta_path) if meta_path is not None else cache_dir / DEFAULT_CACHE_META_NAME
+    if meta_path is not None and not resolved_meta_path.exists():
+        fallback_meta_path = cache_dir / Path(meta_path).name
+        if fallback_meta_path.exists():
+            resolved_meta_path = fallback_meta_path
     if expected_meta is not None:
         if not resolved_meta_path.exists():
             return None
