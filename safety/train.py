@@ -114,7 +114,7 @@ def make_training_args() -> TrainingArguments:
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
         dataloader_num_workers=CONFIG["dataloader_num_workers"],
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         save_strategy="steps",
         eval_steps=CONFIG["steps"],
         save_steps=CONFIG["steps"],
