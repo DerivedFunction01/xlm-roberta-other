@@ -173,20 +173,46 @@ LANGS = CONFIG["xnli_languages"]
 #         "zh",
 #     ],
 # }
-def flatten_xnli(example):
-    """Expand one multi-lang row into one row per language."""
-    hyp_translations = example["hypothesis"]["translation"]   # ordered by LANGS
+def flatten_xnli(batch, indices):
+    """Expand a batch of multi-lang rows into one row per language.
+
+    `datasets.map(..., batched=True)` is required here because each input row
+    becomes multiple output rows.
+    """
+    premises = []
+    hypotheses = []
+    labels = []
+    langs = []
+    source_ids = []
+
+    for premise_row, hypothesis_row, label, source_id in zip(
+        batch["premise"],
+        batch["hypothesis"],
+        batch["label"],
+        indices,
+    ):
+        hyp_translations = dict(zip(hypothesis_row["language"], hypothesis_row["translation"]))
+        for lang in LANGS:
+            premises.append(premise_row[lang])
+            hypotheses.append(hyp_translations[lang])
+            labels.append(label)
+            langs.append(lang)
+            source_ids.append(source_id)
+
     return {
-        "premise":    [example["premise"][lang]    for lang in LANGS],
-        "hypothesis": [hyp_translations[i]         for i, _ in enumerate(LANGS)],
-        "label":      [example["label"]]            * len(LANGS),
-        "lang":       list(LANGS),
+        "premise": premises,
+        "hypothesis": hypotheses,
+        "label": labels,
+        "lang": langs,
+        "source_id": source_ids,
     }
 
 xnli_flat = xnli_dev.map(
     flatten_xnli,
-    batched=False,
+    batched=True,
+    with_indices=True,
     remove_columns=xnli_dev.column_names,
+    desc="Flattening XNLI",
 )
 
 print(f"  XNLI flattened: {len(xnli_flat):,} rows  ({len(xnli_dev):,} originals × {len(LANGS)} langs)")
@@ -214,15 +240,16 @@ def build_xnli_datasets(flat_ds, pool_size, val_size, same_pct, cross_pct, langs
 
     n_same  = int(pool_size * same_pct  / 100)
     n_cross = int(pool_size * cross_pct / 100)
-    n_lang  = len(langs)
-
     # ── Group flat rows by original XNLI example ───────────────────────────
-    # The flat dataset has n_lang consecutive rows per original example.
-    n_orig = len(flat_ds) // n_lang
-    by_example = [
-        [flat_ds[i * n_lang + j] for j in range(n_lang)]
-        for i in range(n_orig)
-    ]
+    # We keep a stable source_id during flattening instead of assuming the
+    # flattened rows stay in consecutive groups forever.
+    by_source: dict[int, list[dict[str, str | int]]] = {}
+    for row in flat_ds:
+        by_source.setdefault(int(row["source_id"]), []).append(row)
+
+    by_example = list(by_source.values())
+    if any(len(variants) != len(langs) for variants in by_example):
+        raise ValueError("Unexpected flattened XNLI group size; check flatten_xnli()")
     rng.shuffle(by_example)
 
     # ── Same-language rows ─────────────────────────────────────────────────

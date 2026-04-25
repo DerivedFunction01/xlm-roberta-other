@@ -38,7 +38,7 @@ BASE_PACKAGES = [
     
 CUSTOM_PACKAGES = [
     "pysbd",
-    "nltk"
+    "nltk",
 ]
 
 # Packages for the classification server
