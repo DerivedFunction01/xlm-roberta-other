@@ -8,6 +8,7 @@ from pathlib import Path
 import evaluate
 import numpy as np
 from datasets import DatasetDict, load_dataset
+from huggingface_hub import login
 from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
 
 # %%
@@ -26,6 +27,7 @@ CONFIG = {
 }
 
 BASE_DIR = Path(".")
+HF_TOKEN_PATH = BASE_DIR / "hf_token"
 TOKENIZED_CACHE_DIR = BASE_DIR / ".cache" / "xlm_roberta_other" / "nli" / "tokenized"
 TOKENIZED_CACHE_META = TOKENIZED_CACHE_DIR / "dataset.meta.json"
 LABEL2ID = {"entailment": 0, "neutral": 1, "contradiction": 2}
@@ -33,6 +35,15 @@ ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
 random.seed(CONFIG["seed"])
 np.random.seed(CONFIG["seed"])
+
+if not HF_TOKEN_PATH.exists():
+    raise FileNotFoundError(f"Missing Hugging Face token file: {HF_TOKEN_PATH}")
+
+HF_TOKEN = HF_TOKEN_PATH.read_text(encoding="utf-8").strip()
+if not HF_TOKEN:
+    raise ValueError(f"Hugging Face token file is empty: {HF_TOKEN_PATH}")
+
+login(token=HF_TOKEN, add_to_git_credential=False)
 
 
 # %%
@@ -89,6 +100,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
     num_labels=3,
     id2label=ID2LABEL,
     label2id=LABEL2ID,
+    token=HF_TOKEN,
 )
 
 accuracy_metric = evaluate.load("accuracy")

@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from datasets import DatasetDict, load_dataset
+from huggingface_hub import login
 from sklearn.metrics import f1_score, precision_score, recall_score
 from transformers import (
     Trainer,
@@ -40,6 +41,7 @@ CONFIG = {
 }
 
 BASE_DIR = Path(".")
+HF_TOKEN_PATH = BASE_DIR / "hf_token"
 TOKENIZED_CACHE_DIR = BASE_DIR / ".cache" / "xlm_roberta_other" / "safety" / "tokenized"
 TOKENIZED_CACHE_META = TOKENIZED_CACHE_DIR / "dataset.meta.json"
 
@@ -47,6 +49,15 @@ random.seed(CONFIG["seed"])
 np.random.seed(CONFIG["seed"])
 torch.manual_seed(CONFIG["seed"])
 warnings.filterwarnings("ignore", category=UserWarning)
+
+if not HF_TOKEN_PATH.exists():
+    raise FileNotFoundError(f"Missing Hugging Face token file: {HF_TOKEN_PATH}")
+
+HF_TOKEN = HF_TOKEN_PATH.read_text(encoding="utf-8").strip()
+if not HF_TOKEN:
+    raise ValueError(f"Hugging Face token file is empty: {HF_TOKEN_PATH}")
+
+login(token=HF_TOKEN, add_to_git_credential=False)
 
 
 # %%
@@ -160,7 +171,7 @@ for split_name in ("train", "val", "test"):
 
 # %%
 print(f"Loading model: {CONFIG['model_name']}")
-model_config = XLMRobertaConfig.from_pretrained(CONFIG["model_name"])
+model_config = XLMRobertaConfig.from_pretrained(CONFIG["model_name"], token=HF_TOKEN)
 model_config.num_category_labels = len(known_categories)
 model_config.label2id = label2id
 model_config.id2label = id2label
@@ -170,6 +181,7 @@ model = XLMRobertaTwoHeadForSafety.from_pretrained(
     CONFIG["model_name"],
     config=model_config,
     ignore_mismatched_sizes=True,
+    token=HF_TOKEN,
 )
 
 threshold = CONFIG["threshold"]
