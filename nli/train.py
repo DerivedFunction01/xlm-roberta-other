@@ -86,6 +86,7 @@ def make_training_args(*, warmup_steps: int) -> TrainingArguments:
         metric_for_best_model="accuracy",
         seed=CONFIG["seed"],
         report_to="tensorboard",
+        push_to_hub=True
     )
 
 
@@ -143,3 +144,4 @@ trainer = Trainer(
 trainer.train()
 trainer.save_model(CONFIG["output_dir"])
 print(f"\nModel saved to: {CONFIG['output_dir']}")
+trainer.push_to_hub()

@@ -149,6 +149,7 @@ def make_training_args(*, warmup_steps: int) -> TrainingArguments:
         seed=CONFIG["seed"],
         report_to="tensorboard",
         label_names=["labels", "binary_label"],
+        push_to_hub=True
     )
 
 
@@ -264,3 +265,4 @@ print(trainer.evaluate(ds["test"]))
 
 trainer.save_model(CONFIG["output_dir"])
 print(f"\nModel saved to: {CONFIG['output_dir']}")
+trainer.push_to_hub()
