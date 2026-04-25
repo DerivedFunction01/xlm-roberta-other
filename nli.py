@@ -59,7 +59,7 @@ assert CONFIG["same_lang_pct"] + CONFIG["cross_lang_pct"] == 100, \
 # %%
 import random
 import numpy as np
-from datasets import load_dataset, concatenate_datasets, Dataset
+from datasets import concatenate_datasets, Dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
@@ -67,6 +67,8 @@ from transformers import (
     Trainer,
 )
 import evaluate
+
+from fetch import load_mnli_dataset, load_xnli_dataset
 
 random.seed(CONFIG["seed"])
 np.random.seed(CONFIG["seed"])
@@ -76,7 +78,7 @@ np.random.seed(CONFIG["seed"])
 
 # %%
 print("Loading MultiNLI...")
-mnli_raw = load_dataset("nyu-mll/multi_nli")
+mnli_raw = load_mnli_dataset()
 
 def _select(ds, n):
     """Shuffle + select n rows; pass None to keep all."""
@@ -112,7 +114,7 @@ print(f"  MNLI val:   {len(mnli_val):,} rows")
 
 # %%
 print("Loading XNLI (all languages)...")
-xnli_raw = load_dataset("facebook/xnli", "all_languages")
+xnli_raw = load_xnli_dataset()
 
 # Use the dev split — professionally translated, not machine-translated
 # (Laurer explicitly avoids the machine-translated XNLI train split)
