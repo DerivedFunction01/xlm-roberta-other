@@ -28,11 +28,12 @@ CONFIG = {
     "output_dir": "./xlmr-safety-guard",
     "max_length": 512,
     "num_train_epochs": 2,
-    "steps": 1000,
     "learning_rate": 2e-5,
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 4,
     "gradient_accumulation_steps": 4,
+    "evals_per_epoch": 2,
+    "saves_per_epoch": 2,
     "logging_steps": 100,
     "weight_decay": 0.01,
     "fp16": True,
@@ -71,13 +72,29 @@ def load_cached_dataset(cache_dir: Path) -> DatasetDict:
     return load_dataset("parquet", data_files=split_files)
 
 
-def compute_warmup_steps(train_size: int) -> int:
-    steps_per_epoch = math.ceil(
-        train_size
-        / (CONFIG["per_device_train_batch_size"] * CONFIG["gradient_accumulation_steps"])
+def get_world_size() -> int:
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_world_size()
+    return max(1, torch.cuda.device_count())
+
+
+def get_effective_batch_size() -> int:
+    return (
+        CONFIG["per_device_train_batch_size"]
+        * CONFIG["gradient_accumulation_steps"]
+        * get_world_size()
     )
+
+
+def compute_warmup_steps(train_size: int) -> int:
+    steps_per_epoch = math.ceil(train_size / get_effective_batch_size())
     total_steps = steps_per_epoch * CONFIG["num_train_epochs"]
     return max(1, int(total_steps * WARMUP_RATIO))
+
+
+def compute_step_interval(train_size: int, *, checkpoints_per_epoch: int) -> int:
+    steps_per_epoch = math.ceil(train_size / get_effective_batch_size())
+    return max(1, math.ceil(steps_per_epoch / checkpoints_per_epoch))
 
 
 class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
@@ -125,7 +142,7 @@ class XLMRobertaTwoHeadForSafety(XLMRobertaPreTrainedModel):
         )
 
 
-def make_training_args(*, warmup_steps: int) -> TrainingArguments:
+def make_training_args(*, warmup_steps: int, eval_steps: int, save_steps: int) -> TrainingArguments:
     return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
@@ -141,8 +158,8 @@ def make_training_args(*, warmup_steps: int) -> TrainingArguments:
         dataloader_num_workers=CONFIG["dataloader_num_workers"],
         eval_strategy="steps",
         save_strategy="steps",
-        eval_steps=CONFIG["steps"],
-        save_steps=CONFIG["steps"],
+        eval_steps=eval_steps,
+        save_steps=save_steps,
         load_best_model_at_end=True,
         metric_for_best_model="binary_f1",
         greater_is_better=True,
@@ -179,8 +196,13 @@ print(f"  Known categories: {len(known_categories)}")
 print(f"  Train: {len(ds['train']):,}")
 print(f"  Val:   {len(ds['val']):,}")
 print(f"  Test:  {len(ds['test']):,}")
+print(f"  GPU count: {get_world_size()}")
 warmup_steps = compute_warmup_steps(len(ds["train"]))
+eval_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["evals_per_epoch"])
+save_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["saves_per_epoch"])
 print(f"  Warmup steps: {warmup_steps}")
+print(f"  Eval interval: {eval_interval}")
+print(f"  Save interval: {save_interval}")
 
 for split_name in ("train", "val", "test"):
     ds[split_name].set_format("torch", columns=["input_ids", "attention_mask", "labels", "binary_label"])
@@ -251,7 +273,11 @@ def compute_metrics(eval_pred):
 
 trainer = Trainer(
     model=model,
-    args=make_training_args(warmup_steps=warmup_steps),
+    args=make_training_args(
+        warmup_steps=warmup_steps,
+        eval_steps=eval_interval,
+        save_steps=save_interval,
+    ),
     train_dataset=ds["train"],
     eval_dataset=ds["val"],
     compute_metrics=compute_metrics,

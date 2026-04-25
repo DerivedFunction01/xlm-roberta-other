@@ -8,6 +8,7 @@ from pathlib import Path
 
 import evaluate
 import numpy as np
+import torch
 from datasets import DatasetDict, load_dataset
 from huggingface_hub import login
 from transformers import AutoModelForSequenceClassification, Trainer, TrainingArguments
@@ -22,6 +23,8 @@ CONFIG = {
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 4,
     "gradient_accumulation_steps": 4,
+    "evals_per_epoch": 2,
+    "saves_per_epoch": 2,
     "logging_steps": 100,
     "weight_decay": 0.06,
     "fp16": True,
@@ -58,16 +61,32 @@ def load_cached_dataset(cache_dir: Path) -> DatasetDict:
     return load_dataset("parquet", data_files=split_files)
 
 
-def compute_warmup_steps(train_size: int) -> int:
-    steps_per_epoch = math.ceil(
-        train_size
-        / (CONFIG["per_device_train_batch_size"] * CONFIG["gradient_accumulation_steps"])
+def get_world_size() -> int:
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_world_size()
+    return max(1, torch.cuda.device_count())
+
+
+def get_effective_batch_size() -> int:
+    return (
+        CONFIG["per_device_train_batch_size"]
+        * CONFIG["gradient_accumulation_steps"]
+        * get_world_size()
     )
+
+
+def compute_warmup_steps(train_size: int) -> int:
+    steps_per_epoch = math.ceil(train_size / get_effective_batch_size())
     total_steps = steps_per_epoch * CONFIG["num_train_epochs"]
     return max(1, int(total_steps * WARMUP_RATIO))
 
 
-def make_training_args(*, warmup_steps: int) -> TrainingArguments:
+def compute_step_interval(train_size: int, *, checkpoints_per_epoch: int) -> int:
+    steps_per_epoch = math.ceil(train_size / get_effective_batch_size())
+    return max(1, math.ceil(steps_per_epoch / checkpoints_per_epoch))
+
+
+def make_training_args(*, warmup_steps: int, eval_steps: int, save_steps: int) -> TrainingArguments:
     return TrainingArguments(
         output_dir=CONFIG["output_dir"],
         num_train_epochs=CONFIG["num_train_epochs"],
@@ -80,13 +99,15 @@ def make_training_args(*, warmup_steps: int) -> TrainingArguments:
         warmup_steps=warmup_steps,
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        eval_strategy="steps",
+        save_strategy="steps",
+        eval_steps=eval_steps,
+        save_steps=save_steps,
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
         seed=CONFIG["seed"],
         report_to="tensorboard",
-        push_to_hub=True
+        push_to_hub=True,
     )
 
 
@@ -108,8 +129,13 @@ eval_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"
 
 print(f"Final train: {len(train_dataset):,} rows")
 print(f"Final eval:  {len(eval_dataset):,} rows")
+print(f"GPU count:   {get_world_size()}")
 warmup_steps = compute_warmup_steps(len(train_dataset))
+eval_interval = compute_step_interval(len(train_dataset), checkpoints_per_epoch=CONFIG["evals_per_epoch"])
+save_interval = compute_step_interval(len(train_dataset), checkpoints_per_epoch=CONFIG["saves_per_epoch"])
 print(f"Warmup steps: {warmup_steps}")
+print(f"Eval interval: {eval_interval}")
+print(f"Save interval: {save_interval}")
 
 
 # %%
@@ -133,7 +159,11 @@ def compute_metrics(eval_pred):
 
 trainer = Trainer(
     model=model,
-    args=make_training_args(warmup_steps=warmup_steps),
+    args=make_training_args(
+        warmup_steps=warmup_steps,
+        eval_steps=eval_interval,
+        save_steps=save_interval,
+    ),
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     compute_metrics=compute_metrics,
