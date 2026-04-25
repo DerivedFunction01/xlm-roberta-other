@@ -42,8 +42,9 @@ def _tokenize_text_batch(
         max_length=max_length,
         padding=padding,
     )
-    if "labels" in batch:
-        enc["labels"] = batch["labels"]
+    for column in ("labels", "label", "binary_label", "category_labels"):
+        if column in batch:
+            enc[column] = batch[column]
     return enc
 
 
@@ -85,10 +86,9 @@ def _tokenize_pair_batch(
         max_length=max_length,
         padding=padding,
     )
-    if "label" in batch:
-        enc["label"] = batch["label"]
-    if "labels" in batch:
-        enc["labels"] = batch["labels"]
+    for column in ("labels", "label", "binary_label", "category_labels"):
+        if column in batch:
+            enc[column] = batch[column]
     return enc
 
 
@@ -143,4 +143,3 @@ def load_tokenized_dataset_cache(
     expected_meta: dict[str, Any] | None = None,
 ) -> DatasetDict | None:
     return load_dataset_cache(cache_dir, meta_path=meta_path, expected_meta=expected_meta)
-

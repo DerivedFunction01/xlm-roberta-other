@@ -217,6 +217,8 @@ def build_safety_classifier_dataset(
     flat_examples = binarize_examples(flat_examples, known_categories)
     label2id = {category: idx for idx, category in enumerate(known_categories)}
     id2label = {idx: category for category, idx in label2id.items()}
+    binary_label2id = {"safe": 0, "unsafe": 1}
+    binary_id2label = {idx: label for label, idx in binary_label2id.items()}
 
     columns = list(flat_examples[0].keys())
     dataset = rows_to_dataset_dict(
@@ -232,6 +234,8 @@ def build_safety_classifier_dataset(
         "known_categories": known_categories,
         "label2id": label2id,
         "id2label": id2label,
+        "binary_label2id": binary_label2id,
+        "binary_id2label": binary_id2label,
         "num_examples": len(flat_examples),
         "split_sizes": {split_name: len(split) for split_name, split in dataset.items()},
     }
@@ -256,6 +260,8 @@ def build_and_cache_safety_dataset(
     raw_cache_meta = PATHS["safety"]["raw_cache_meta"]
     tokenized_cache_dir = PATHS["safety"]["tokenized_cache_dir"]
     tokenized_cache_meta = PATHS["safety"]["tokenized_cache_meta"]
+    binary_label2id = {"safe": 0, "unsafe": 1}
+    binary_id2label = {0: "safe", 1: "unsafe"}
 
     raw_meta = {
         "cache_version": SAFETY_CACHE_VERSION,
@@ -267,6 +273,8 @@ def build_and_cache_safety_dataset(
         "val_size": val_size,
         "test_size": test_size,
         "seed": seed,
+        "binary_label2id": binary_label2id,
+        "binary_id2label": binary_id2label,
     }
 
     tokenized_meta = {
@@ -281,6 +289,8 @@ def build_and_cache_safety_dataset(
         "val_size": val_size,
         "test_size": test_size,
         "seed": seed,
+        "binary_label2id": binary_label2id,
+        "binary_id2label": binary_id2label,
     }
 
     if not force_rebuild:
@@ -315,7 +325,9 @@ def build_and_cache_safety_dataset(
     )
     tokenized = DatasetDict(
         {
-            split_name: split.remove_columns([col for col in split.column_names if col not in {"input_ids", "attention_mask", "labels"}])
+            split_name: split.remove_columns(
+                [col for col in split.column_names if col not in {"input_ids", "attention_mask", "labels", "binary_label"}]
+            )
             for split_name, split in tokenized.items()
         }
     )
@@ -324,6 +336,8 @@ def build_and_cache_safety_dataset(
         "known_categories": known_categories,
         "label2id": label2id,
         "id2label": id2label,
+        "binary_label2id": binary_label2id,
+        "binary_id2label": binary_id2label,
         "num_examples": meta.get("num_examples"),
         "split_sizes": {split_name: len(split) for split_name, split in tokenized.items()},
     }

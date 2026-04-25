@@ -21,7 +21,7 @@ def build_all_sources() -> None:
     print("Building safety caches ...")
     build_and_cache_safety_dataset(
         model_name="xlm-roberta-base",
-        max_length=256,
+        max_length=512,
     )
 
 
