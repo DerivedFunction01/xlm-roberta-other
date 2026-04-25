@@ -4,6 +4,7 @@ import random
 from typing import Any
 
 from datasets import Dataset, DatasetDict, Value, concatenate_datasets
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from shared.cache import save_dataset_cache, load_dataset_cache
@@ -77,7 +78,7 @@ def build_xnli_datasets(
     n_cross = int(pool_size * cross_pct / 100)
 
     by_source: dict[int, list[dict[str, Any]]] = {}
-    for row in flat_ds:
+    for row in tqdm(flat_ds, desc="Grouping flattened XNLI rows", unit="row"):
         by_source.setdefault(int(row["source_id"]), []).append(row)
 
     by_example = list(by_source.values())
@@ -86,14 +87,14 @@ def build_xnli_datasets(
     rng.shuffle(by_example)
 
     same_rows = []
-    for variants in by_example:
+    for variants in tqdm(by_example, desc="Sampling XNLI same-language rows", unit="group"):
         if len(same_rows) >= n_same:
             break
         v = rng.choice(variants)
         same_rows.append({"premise": v["premise"], "hypothesis": v["hypothesis"], "label": v["label"]})
 
     cross_rows = []
-    for variants in by_example:
+    for variants in tqdm(by_example, desc="Sampling XNLI cross-language rows", unit="group"):
         if len(cross_rows) >= n_cross:
             break
         if len(variants) < 2:

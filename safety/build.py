@@ -7,8 +7,9 @@ from typing import Any
 
 import numpy as np
 from datasets import DatasetDict
-from transformers import AutoTokenizer
 from sklearn.preprocessing import MultiLabelBinarizer
+from tqdm.auto import tqdm
+from transformers import AutoTokenizer
 
 from shared.building import rows_to_dataset_dict
 from shared.cache import load_dataset_cache, save_dataset_cache
@@ -135,7 +136,7 @@ def build_flat_examples(
 ) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     flat_examples: list[dict[str, Any]] = []
-    for row in raw_rows:
+    for row in tqdm(raw_rows, desc="Building safety examples", unit="row"):
         flat_examples.extend(
             row_to_examples(
                 row,
@@ -150,7 +151,7 @@ def build_flat_examples(
 
 def build_label_vocabulary(examples: list[dict[str, Any]], *, min_label_count: int = 10) -> list[str]:
     category_counter: Counter[str] = Counter()
-    for example in examples:
+    for example in tqdm(examples, desc="Counting safety labels", unit="example"):
         category_counter.update(example.get("categories", []))
     known_categories = sorted(category for category, count in category_counter.items() if count >= min_label_count)
     if not known_categories:
@@ -163,7 +164,7 @@ def binarize_examples(examples: list[dict[str, Any]], known_categories: list[str
     mlb = MultiLabelBinarizer(classes=known_categories)
     mlb.fit([known_categories])
 
-    for example in examples:
+    for example in tqdm(examples, desc="Binarizing safety labels", unit="example"):
         filtered = [category for category in example.get("categories", []) if category in label_set]
         example["labels"] = mlb.transform([filtered])[0].astype(np.float32).tolist()
     return examples
