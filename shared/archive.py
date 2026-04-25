@@ -10,7 +10,6 @@ from typing import Iterable
 
 from tqdm.auto import tqdm
 
-from shared.cache import load_dataset_cache
 from shared.paths import CACHE_ROOT
 
 ARTIFACT_ROOT = Path("artifacts")
@@ -41,6 +40,12 @@ def _extract_with_native_tool(archive_path: Path, destination_dir: Path) -> None
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _has_tokenized_cache(tokenized_cache_dir: Path) -> bool:
+    if not tokenized_cache_dir.exists():
+        return False
+    return any(tokenized_cache_dir.glob("*.parquet"))
+
+
 def ensure_cache_archive_extracted(
     subdir_name: str,
     *,
@@ -49,7 +54,7 @@ def ensure_cache_archive_extracted(
 ) -> Path:
     target_dir = cache_root / subdir_name
     tokenized_cache_dir = target_dir / "tokenized"
-    if load_dataset_cache(tokenized_cache_dir) is not None:
+    if _has_tokenized_cache(tokenized_cache_dir):
         return target_dir
 
     archive_path = archive_path_for(subdir_name, artifact_root=artifact_root)
@@ -66,7 +71,7 @@ def ensure_cache_archive_extracted(
                 raise ValueError(f"Unsafe archive member path: {info.filename}")
         _extract_with_native_tool(archive_path, cache_root)
 
-    if load_dataset_cache(tokenized_cache_dir) is None:
+    if not _has_tokenized_cache(tokenized_cache_dir):
         raise RuntimeError(f"Archive extraction did not restore a usable cache: {tokenized_cache_dir}")
     return target_dir
 
