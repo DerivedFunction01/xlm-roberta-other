@@ -179,11 +179,9 @@ def build_safety_classifier_dataset(
     test_size: float = 0.05,
     seed: int = 42,
     force_rebuild: bool = False,
-    cache_dir: str | None = None,
-    cache_meta_path: str | None = None,
+    cache_dir: str = PATHS["safety"]["raw_cache_dir"],
+    cache_meta_path: str = PATHS["safety"]["raw_cache_meta"],
 ) -> tuple[DatasetDict, list[str], dict[str, int], dict[int, str], dict[str, Any]]:
-    cache_dir = cache_dir or PATHS["safety"]["raw_cache_dir"]
-    cache_meta_path = cache_meta_path or PATHS["safety"]["raw_cache_meta"]
     expected_meta = {
         "cache_version": SAFETY_CACHE_VERSION,
         "dataset_name": "nvidia/Nemotron-Safety-Guard-Dataset-v3",
