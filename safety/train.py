@@ -32,7 +32,7 @@ CONFIG = {
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 4,
     "gradient_accumulation_steps": 4,
-    "warmup_ratio": 0.1,
+    "warmup_steps": 5686,
     "weight_decay": 0.01,
     "fp16": True,
     "dataloader_num_workers": 4,
@@ -121,7 +121,7 @@ def make_training_args() -> TrainingArguments:
         per_device_train_batch_size=CONFIG["per_device_train_batch_size"],
         per_device_eval_batch_size=CONFIG["per_device_eval_batch_size"],
         gradient_accumulation_steps=CONFIG["gradient_accumulation_steps"],
-        warmup_ratio=CONFIG["warmup_ratio"],
+        warmup_steps=CONFIG["warmup_steps"],
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
         dataloader_num_workers=CONFIG["dataloader_num_workers"],
@@ -164,6 +164,7 @@ print(f"  Known categories: {len(known_categories)}")
 print(f"  Train: {len(ds['train']):,}")
 print(f"  Val:   {len(ds['val']):,}")
 print(f"  Test:  {len(ds['test']):,}")
+print(f"  Warmup steps: {CONFIG['warmup_steps']}")
 
 for split_name in ("train", "val", "test"):
     ds[split_name].set_format("torch", columns=["input_ids", "attention_mask", "labels", "binary_label"])

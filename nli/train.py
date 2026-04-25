@@ -20,7 +20,8 @@ CONFIG = {
     "learning_rate": 2e-5,
     "per_device_train_batch_size": 16,
     "per_device_eval_batch_size": 16,
-    "warmup_ratio": 0.1,
+    "gradient_accumulation_steps": 1,
+    "warmup_steps": 4966,
     "weight_decay": 0.06,
     "fp16": True,
     "seed": 42,
@@ -61,10 +62,11 @@ def make_training_args() -> TrainingArguments:
         learning_rate=CONFIG["learning_rate"],
         per_device_train_batch_size=CONFIG["per_device_train_batch_size"],
         per_device_eval_batch_size=CONFIG["per_device_eval_batch_size"],
-        warmup_ratio=CONFIG["warmup_ratio"],
+        gradient_accumulation_steps=CONFIG["gradient_accumulation_steps"],
+        warmup_steps=CONFIG["warmup_steps"],
         weight_decay=CONFIG["weight_decay"],
         fp16=CONFIG["fp16"],
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
@@ -91,6 +93,7 @@ eval_dataset.set_format("torch", columns=["input_ids", "attention_mask", "label"
 
 print(f"Final train: {len(train_dataset):,} rows")
 print(f"Final eval:  {len(eval_dataset):,} rows")
+print(f"Warmup steps: {CONFIG['warmup_steps']}")
 
 
 # %%
