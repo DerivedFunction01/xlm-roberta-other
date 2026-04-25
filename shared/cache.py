@@ -5,11 +5,18 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from datasets import DatasetDict, load_from_disk
-
-from io_utils import write_json_atomic
+import pandas as pd
+from datasets import Dataset, DatasetDict
 
 DEFAULT_CACHE_META_NAME = "dataset.meta.json"
+
+
+def write_json_atomic(path: str | Path, payload: dict[str, Any]) -> None:
+    path = Path(path)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
 
 
 def save_dataset_cache(
@@ -20,18 +27,21 @@ def save_dataset_cache(
     meta: dict[str, Any] | None = None,
     overwrite: bool = True,
 ) -> None:
-    """Persist a DatasetDict to disk with an optional manifest."""
+    """Persist a DatasetDict to parquet splits with an optional manifest."""
     cache_dir = Path(cache_dir)
     if cache_dir.exists():
         if not overwrite:
             raise FileExistsError(f"Refusing to overwrite existing cache dir: {cache_dir}")
         shutil.rmtree(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    dataset.save_to_disk(str(cache_dir))
+
+    for split_name, split in dataset.items():
+        frame = split.to_pandas()
+        frame.to_parquet(cache_dir / f"{split_name}.parquet", index=False)
 
     if meta is not None:
         resolved_meta_path = Path(meta_path) if meta_path is not None else cache_dir / DEFAULT_CACHE_META_NAME
-        write_json_atomic(str(resolved_meta_path), meta)
+        write_json_atomic(resolved_meta_path, meta)
 
 
 def load_dataset_cache(
@@ -58,11 +68,17 @@ def load_dataset_cache(
             if cached_meta.get(key) != value:
                 return None
 
+    split_paths = sorted(cache_dir.glob("*.parquet"))
+    if not split_paths:
+        return None
+
+    splits: dict[str, Dataset] = {}
     try:
-        loaded = load_from_disk(str(cache_dir))
+        for split_path in split_paths:
+            split_name = split_path.stem
+            frame = pd.read_parquet(split_path)
+            splits[split_name] = Dataset.from_pandas(frame, preserve_index=False)
     except Exception:
         return None
-    if not isinstance(loaded, DatasetDict):
-        return None
-    return loaded
+    return DatasetDict(splits)
 

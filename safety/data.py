@@ -9,10 +9,10 @@ import numpy as np
 from datasets import DatasetDict
 from sklearn.preprocessing import MultiLabelBinarizer
 
-from building import rows_to_dataset_dict
-from cache import load_dataset_cache, save_dataset_cache
-from fetch import load_safety_guard_dataset
-from paths import PATHS
+from shared.building import rows_to_dataset_dict
+from shared.cache import load_dataset_cache, save_dataset_cache
+from shared.fetch import load_safety_guard_dataset
+from shared.paths import PATHS
 from text_utils.mutations import MutationConfig, TextMutator
 
 REDACTED_TOKEN = "REDACTED"
@@ -180,8 +180,8 @@ def build_safety_classifier_dataset(
     cache_dir: str | None = None,
     cache_meta_path: str | None = None,
 ) -> tuple[DatasetDict, list[str], dict[str, int], dict[int, str], dict[str, Any]]:
-    cache_dir = cache_dir or PATHS["safety_classifier"]["cache_dir"]
-    cache_meta_path = cache_meta_path or PATHS["safety_classifier"]["cache_meta"]
+    cache_dir = cache_dir or PATHS["safety"]["cache_dir"]
+    cache_meta_path = cache_meta_path or PATHS["safety"]["cache_meta"]
     expected_meta = {
         "cache_version": SAFETY_CACHE_VERSION,
         "dataset_name": "nvidia/Nemotron-Safety-Guard-Dataset-v3",
@@ -237,3 +237,4 @@ def build_safety_classifier_dataset(
     }
     save_dataset_cache(dataset, cache_dir, meta_path=cache_meta_path, meta=meta)
     return dataset, known_categories, label2id, id2label, meta
+

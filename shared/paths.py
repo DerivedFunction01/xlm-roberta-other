@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 CACHE_ROOT = ROOT_DIR / ".cache" / "xlm_roberta_other"
 
 PATHS: dict[str, Any] = {
@@ -14,16 +14,16 @@ PATHS: dict[str, Any] = {
         "cache_dir": str(CACHE_ROOT / "nli"),
         "cache_meta": str(CACHE_ROOT / "nli" / "dataset.meta.json"),
     },
-    "safety_classifier": {
-        "cache_dir": str(CACHE_ROOT / "safety_classifier"),
-        "cache_meta": str(CACHE_ROOT / "safety_classifier" / "dataset.meta.json"),
+    "safety": {
+        "cache_dir": str(CACHE_ROOT / "safety"),
+        "cache_meta": str(CACHE_ROOT / "safety" / "dataset.meta.json"),
     },
 }
 
 for path in [
     CACHE_ROOT,
     Path(PATHS["nli"]["cache_dir"]),
-    Path(PATHS["safety_classifier"]["cache_dir"]),
+    Path(PATHS["safety"]["cache_dir"]),
 ]:
     path.mkdir(parents=True, exist_ok=True)
 
