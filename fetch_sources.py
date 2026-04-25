@@ -25,6 +25,16 @@ def build_all_sources() -> None:
         action()
 
 
+def build_cache_subdir(subdir_name: str) -> None:
+    if subdir_name == "nli":
+        build_and_cache_nli_dataset(model_name="xlm-roberta-base", max_length=256)
+        return
+    if subdir_name == "safety":
+        build_and_cache_safety_dataset(model_name="xlm-roberta-base", max_length=512)
+        return
+    raise ValueError(f"Unknown cache subdir: {subdir_name}")
+
+
 def validate_tokenized_cache(subdir_name: str) -> Path:
     tokenized_dir = CACHE_ROOT / subdir_name / "tokenized"
     if not tokenized_dir.exists():
@@ -73,9 +83,9 @@ def reconcile_cache_subdir(subdir_name: str) -> Path:
         ensure_cache_archive_extracted(subdir_name)
         return Path("artifacts") / f"xlm_roberta_other_{subdir_name}_cache.zip"
 
-    raise FileNotFoundError(
-        f"{subdir_name}: neither tokenized cache nor archive exists. Build the cache first or restore it from artifacts."
-    )
+    print(f"{subdir_name}: cache and archive both missing, rebuilding cache locally")
+    build_cache_subdir(subdir_name)
+    return zip_cache_subdir(subdir_name)
 
 
 def parse_args() -> argparse.Namespace:
