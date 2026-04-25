@@ -55,13 +55,11 @@ torch.manual_seed(CONFIG["seed"])
 warnings.filterwarnings("ignore", category=UserWarning)
 
 if not HF_TOKEN_PATH.exists():
-    raise FileNotFoundError(f"Missing Hugging Face token file: {HF_TOKEN_PATH}")
-
-HF_TOKEN = HF_TOKEN_PATH.read_text(encoding="utf-8").strip()
-if not HF_TOKEN:
-    raise ValueError(f"Hugging Face token file is empty: {HF_TOKEN_PATH}")
-
-login(token=HF_TOKEN, add_to_git_credential=False)
+    HF_TOKEN = None
+else:
+    HF_TOKEN = HF_TOKEN_PATH.read_text(encoding="utf-8").strip() or None
+    if HF_TOKEN is not None:
+        login(token=HF_TOKEN, add_to_git_credential=False)
 
 
 # %%
