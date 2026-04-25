@@ -223,6 +223,66 @@ def binarize_examples(examples: list[dict[str, Any]], known_categories: list[str
     return examples
 
 
+def summarize_label_distribution(
+    examples: list[dict[str, Any]],
+    known_categories: list[str],
+) -> dict[str, Any]:
+    binary_counter: Counter[str] = Counter()
+    category_counter: Counter[str] = Counter()
+
+    for example in tqdm(examples, desc="Summarizing safety labels", unit="example"):
+        binary_label = "unsafe" if int(example.get("binary_label", 0)) == 1 else "safe"
+        binary_counter[binary_label] += 1
+        category_counter.update(category for category in example.get("categories", []) if category in known_categories)
+
+    total_examples = len(examples)
+    return {
+        "num_examples": total_examples,
+        "binary_label_counts": dict(binary_counter),
+        "binary_label_rates": {
+            label: (count / total_examples) if total_examples else 0.0
+            for label, count in binary_counter.items()
+        },
+        "category_positive_counts": dict(category_counter),
+        "category_positive_rates": {
+            category: (category_counter.get(category, 0) / total_examples) if total_examples else 0.0
+            for category in known_categories
+        },
+    }
+
+
+def summarize_dataset_label_distribution(
+    dataset: DatasetDict,
+    known_categories: list[str],
+) -> dict[str, Any]:
+    binary_counter: Counter[str] = Counter()
+    category_counter: Counter[str] = Counter()
+    total_examples = 0
+
+    for split_name, split in tqdm(dataset.items(), desc="Summarizing safety label distribution", unit="split"):
+        for example in tqdm(split, desc=f"Counting {split_name}", unit="example", leave=False):
+            total_examples += 1
+            binary_label = "unsafe" if int(example.get("binary_label", 0)) == 1 else "safe"
+            binary_counter[binary_label] += 1
+            category_values = example.get("categories", [])
+            if isinstance(category_values, list):
+                category_counter.update(category for category in category_values if category in known_categories)
+
+    return {
+        "num_examples": total_examples,
+        "binary_label_counts": dict(binary_counter),
+        "binary_label_rates": {
+            label: (count / total_examples) if total_examples else 0.0
+            for label, count in binary_counter.items()
+        },
+        "category_positive_counts": dict(category_counter),
+        "category_positive_rates": {
+            category: (category_counter.get(category, 0) / total_examples) if total_examples else 0.0
+            for category in known_categories
+        },
+    }
+
+
 def build_safety_classifier_dataset(
     *,
     dataset_split: str = "train",
@@ -256,6 +316,9 @@ def build_safety_classifier_dataset(
             known_categories = list(meta.get("known_categories", []))
             label2id = dict(meta.get("label2id", {}))
             id2label = {int(k): v for k, v in meta.get("id2label", {}).items()} if isinstance(meta.get("id2label"), dict) else {}
+            if "binary_label_counts" not in meta or "category_positive_counts" not in meta:
+                label_distribution = summarize_dataset_label_distribution(cached, known_categories)
+                meta = {**meta, **label_distribution}
             return cached, known_categories, label2id, id2label, meta
 
     raw = load_safety_guard_dataset(split=dataset_split)
@@ -269,6 +332,7 @@ def build_safety_classifier_dataset(
 
     known_categories = build_label_vocabulary(flat_examples, min_label_count=min_label_count)
     flat_examples = binarize_examples(flat_examples, known_categories)
+    label_distribution = summarize_label_distribution(flat_examples, known_categories)
     label2id = {category: idx for idx, category in enumerate(known_categories)}
     id2label = {idx: category for category, idx in label2id.items()}
     binary_label2id = {"safe": 0, "unsafe": 1}
@@ -290,7 +354,7 @@ def build_safety_classifier_dataset(
         "id2label": id2label,
         "binary_label2id": binary_label2id,
         "binary_id2label": binary_id2label,
-        "num_examples": len(flat_examples),
+        **label_distribution,
         "split_sizes": {split_name: len(split) for split_name, split in dataset.items()},
     }
     save_dataset_cache(dataset, cache_dir, meta_path=cache_meta_path, meta=meta)
@@ -371,6 +435,9 @@ def build_and_cache_safety_dataset(
             known_categories = list(meta.get("known_categories", []))
             label2id = dict(meta.get("label2id", {}))
             id2label = {int(k): v for k, v in meta.get("id2label", {}).items()} if isinstance(meta.get("id2label"), dict) else {}
+            if "binary_label_counts" not in meta or "category_positive_counts" not in meta:
+                label_distribution = summarize_dataset_label_distribution(raw_dataset, known_categories)
+                meta = {**meta, **label_distribution}
             return loaded, known_categories, label2id, id2label, meta
 
     tokenized = tokenize_dataset_dict(
@@ -388,6 +455,7 @@ def build_and_cache_safety_dataset(
             for split_name, split in tokenized.items()
         }
     )
+    label_distribution = summarize_dataset_label_distribution(raw_dataset, known_categories)
     tokenized_meta = {
         **tokenized_meta,
         "known_categories": known_categories,
@@ -395,7 +463,7 @@ def build_and_cache_safety_dataset(
         "id2label": id2label,
         "binary_label2id": binary_label2id,
         "binary_id2label": binary_id2label,
-        "num_examples": raw_meta_state.get("num_examples"),
+        **label_distribution,
         "split_sizes": {split_name: len(split) for split_name, split in tokenized.items()},
     }
     save_dataset_cache(tokenized, tokenized_cache_dir, meta_path=tokenized_cache_meta, meta=tokenized_meta)

@@ -76,6 +76,14 @@ def ensure_cache_archive_extracted(
     return target_dir
 
 
+def cache_has_archive(subdir_name: str, *, artifact_root: Path = ARTIFACT_ROOT) -> bool:
+    return archive_path_for(subdir_name, artifact_root=artifact_root).exists()
+
+
+def cache_has_tokenized_cache(subdir_name: str, *, cache_root: Path = CACHE_ROOT) -> bool:
+    return _has_tokenized_cache(cache_root / subdir_name / "tokenized")
+
+
 def ensure_cache_archives_extracted(
     subdir_names: Iterable[str],
     *,

@@ -197,6 +197,24 @@ print(f"  Train: {len(ds['train']):,}")
 print(f"  Val:   {len(ds['val']):,}")
 print(f"  Test:  {len(ds['test']):,}")
 print(f"  GPU count: {get_world_size()}")
+binary_counts = meta.get("binary_label_counts", {})
+category_counts = meta.get("category_positive_counts", {})
+if binary_counts:
+    print("  Binary distribution:")
+    for label, count in sorted(binary_counts.items()):
+        rate = meta.get("binary_label_rates", {}).get(label)
+        if rate is None:
+            print(f"    {label}: {count}")
+        else:
+            print(f"    {label}: {count} ({rate:.3%})")
+if category_counts:
+    print("  Top category counts:")
+    for label, count in sorted(category_counts.items(), key=lambda item: item[1], reverse=True)[:10]:
+        rate = meta.get("category_positive_rates", {}).get(label)
+        if rate is None:
+            print(f"    {label}: {count}")
+        else:
+            print(f"    {label}: {count} ({rate:.3%})")
 warmup_steps = compute_warmup_steps(len(ds["train"]))
 eval_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["evals_per_epoch"])
 save_interval = compute_step_interval(len(ds["train"]), checkpoints_per_epoch=CONFIG["saves_per_epoch"])
