@@ -23,9 +23,9 @@ def build_all_sources() -> None:
 
 def zip_cache_subdir(subdir_name: str) -> Path:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
-    source_dir = CACHE_ROOT / subdir_name
-    if not source_dir.exists():
-        raise FileNotFoundError(f"Cache directory does not exist: {source_dir}")
+    tokenized_dir = CACHE_ROOT / subdir_name / "tokenized"
+    if not tokenized_dir.exists():
+        raise FileNotFoundError(f"Tokenized cache directory does not exist: {tokenized_dir}")
 
     archive_base = ARTIFACT_ROOT / f"xlm_roberta_other_{subdir_name}_cache"
     archive_path = Path(
@@ -33,7 +33,7 @@ def zip_cache_subdir(subdir_name: str) -> Path:
             str(archive_base),
             "zip",
             root_dir=CACHE_ROOT,
-            base_dir=subdir_name,
+            base_dir=f"{subdir_name}/tokenized",
         )
     )
     print(f"Created cache archive: {archive_path}")
