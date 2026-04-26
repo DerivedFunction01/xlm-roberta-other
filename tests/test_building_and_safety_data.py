@@ -8,7 +8,7 @@ from datasets import DatasetDict
 
 from shared.building import rows_to_dataset_dict, split_indices
 from shared.cache import load_dataset_cache, save_dataset_cache
-from safety.build import REDACTED_TOKEN, build_flat_examples, build_label_vocabulary, row_to_examples
+from safety.build import REDACTED_TOKEN, build_flat_examples, row_to_examples
 
 
 class BuildingAndSafetyDataTests(unittest.TestCase):
@@ -35,9 +35,10 @@ class BuildingAndSafetyDataTests(unittest.TestCase):
 
             loaded = load_dataset_cache(cache_dir, meta_path=meta_path, expected_meta=meta)
             self.assertIsNotNone(loaded)
-            self.assertEqual(len(loaded["train"]), len(dataset["train"]))
-            self.assertEqual(len(loaded["val"]), len(dataset["val"]))
-            self.assertEqual(len(loaded["test"]), len(dataset["test"]))
+            if loaded is not None:
+                self.assertEqual(len(loaded["train"]), len(dataset["train"]))
+                self.assertEqual(len(loaded["val"]), len(dataset["val"]))
+                self.assertEqual(len(loaded["test"]), len(dataset["test"]))
 
     def test_row_to_examples_and_flat_examples(self) -> None:
         raw_rows = [
@@ -47,7 +48,6 @@ class BuildingAndSafetyDataTests(unittest.TestCase):
                 "response": "Stay safe.",
                 "prompt_label": "unsafe",
                 "response_label": "safe",
-                "violated_categories": "self-harm, harassment",
                 "prompt_label_source": "human",
                 "response_label_source": "llm_jury",
                 "tag": "generic",
@@ -62,16 +62,7 @@ class BuildingAndSafetyDataTests(unittest.TestCase):
         flat = build_flat_examples(raw_rows, drop_redacted=True, augment=False)
         self.assertEqual(len(flat), 1)
         self.assertEqual(flat[0]["text"], "Stay safe.")
-
-        vocab = build_label_vocabulary(
-            [
-                {"categories": ["self-harm", "harassment"]},
-                {"categories": ["harassment"]},
-                {"categories": ["harassment"]},
-            ],
-            min_label_count=2,
-        )
-        self.assertEqual(vocab, ["harassment"])
+        self.assertNotIn("categories", flat[0])
 
 
 if __name__ == "__main__":
