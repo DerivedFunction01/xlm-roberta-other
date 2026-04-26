@@ -9,7 +9,7 @@ from functools import partial
 from typing import Any
 
 import numpy as np
-from datasets import DatasetDict
+from datasets import DatasetDict, load_dataset
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
@@ -22,6 +22,30 @@ from text_utils.mutations import MutationConfig, TextMutator
 
 REDACTED_TOKEN = "REDACTED"
 SAFETY_CACHE_VERSION = 1
+XSTEST_DATASET_NAME = "natolambert/xstest-v2-copy"
+
+
+def _binary_example_from_text(
+    *,
+    text: str,
+    binary_label: int,
+    role: str,
+    tag: str,
+    source_id: str,
+    prompt_label_source: str | None = None,
+    response_label_source: str | None = None,
+    language: str = "en",
+) -> dict[str, Any]:
+    return _example_from_text(
+        text=text,
+        binary_label=binary_label,
+        role=role,
+        language=language,
+        prompt_label_source=prompt_label_source,
+        response_label_source=response_label_source,
+        tag=tag,
+        source_id=source_id,
+    )
 
 
 def parse_categories(raw_str: str | None) -> list[str]:
@@ -196,6 +220,114 @@ def build_flat_examples(
     return flat_examples
 
 
+def load_salad_binary_examples(
+    *,
+    dataset_name: str = "OpenSafetyLab/Salad-Data",
+    subset: str = "base_set",
+    split: str = "train",
+) -> list[dict[str, Any]]:
+    dataset = load_dataset(dataset_name, name=subset, split=split)
+    examples: list[dict[str, Any]] = []
+    for row_index, row in tqdm(enumerate(dataset), total=len(dataset), desc="Loading Salad-Data", unit="row"):
+        baseq = str(row.get("baseq", "") or "").strip()
+        augq = str(row.get("augq", "") or "").strip()
+        qid = str(row.get("qid", row_index))
+        if baseq:
+            examples.append(
+                _binary_example_from_text(
+                    text=baseq,
+                    binary_label=1,
+                    role="prompt",
+                    tag="salad_baseq",
+                    source_id=f"{qid}:baseq",
+                    prompt_label_source="salad",
+                )
+            )
+        if augq and augq != baseq:
+            examples.append(
+                _binary_example_from_text(
+                    text=augq,
+                    binary_label=1,
+                    role="prompt",
+                    tag="salad_augq",
+                    source_id=f"{qid}:augq",
+                    prompt_label_source="salad",
+                )
+            )
+    return examples
+
+
+def load_jailbreak_binary_examples(
+    *,
+    dataset_name: str = "jackhhao/jailbreak-classification",
+    split: str = "train",
+) -> list[dict[str, Any]]:
+    dataset = load_dataset(dataset_name, split=split)
+    examples: list[dict[str, Any]] = []
+    for row_index, row in tqdm(enumerate(dataset), total=len(dataset), desc="Loading jailbreak classification", unit="row"):
+        prompt = str(row.get("prompt", "") or "").strip()
+        if not prompt:
+            continue
+        label = str(row.get("type", "") or "").strip().lower()
+        binary_label = 1 if label == "jailbreak" else 0
+        examples.append(
+            _binary_example_from_text(
+                text=prompt,
+                binary_label=binary_label,
+                role="prompt",
+                tag=label or "jailbreak_classification",
+                source_id=str(row.get("id", row_index)),
+                prompt_label_source="jailbreak-classification",
+            )
+        )
+    return examples
+
+
+def load_xstest_binary_examples(
+    *,
+    dataset_name: str = XSTEST_DATASET_NAME,
+) -> list[dict[str, Any]]:
+    dataset = load_dataset(dataset_name)
+    examples: list[dict[str, Any]] = []
+    for split_name, split in tqdm(dataset.items(), desc="Loading XSTest splits", unit="split"):
+        for row_index, row in tqdm(enumerate(split), total=len(split), desc=f"Loading {split_name}", unit="row", leave=False):
+            completion = str(row.get("completion", "") or "").strip()
+            if not completion:
+                continue
+            final_label = str(row.get("final_label", "") or "").strip()
+            binary_label = 0 if final_label == "2_full_refusal" else 1
+            examples.append(
+                _binary_example_from_text(
+                    text=completion,
+                    binary_label=binary_label,
+                    role="response",
+                    tag=final_label or "xstest",
+                    source_id=f"{split_name}:{row.get('id', row_index)}",
+                    response_label_source="xstest",
+                )
+            )
+    return examples
+
+
+def build_binary_safety_examples(
+    *,
+    dataset_split: str = "train",
+    drop_redacted: bool = True,
+    augment: bool = True,
+    seed: int = 42,
+) -> list[dict[str, Any]]:
+    examples = build_flat_examples(
+        [dict(row) for row in load_safety_guard_dataset(split=dataset_split)],
+        drop_redacted=drop_redacted,
+        augment=augment,
+        seed=seed,
+    )
+    examples.extend(load_salad_binary_examples())
+    examples.extend(load_jailbreak_binary_examples())
+    examples.extend(load_xstest_binary_examples())
+    return examples
+
+
 def summarize_dataset_label_distribution(
     dataset: DatasetDict | list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -263,10 +395,8 @@ def build_safety_classifier_dataset(
                 meta = {**meta, **label_distribution}
             return cached, binary_label2id, binary_id2label, meta
 
-    raw = load_safety_guard_dataset(split=dataset_split)
-    raw_rows = [dict(row) for row in raw]
-    flat_examples = build_flat_examples(
-        raw_rows,
+    flat_examples = build_binary_safety_examples(
+        dataset_split=dataset_split,
         drop_redacted=drop_redacted,
         augment=augment,
         seed=seed,
