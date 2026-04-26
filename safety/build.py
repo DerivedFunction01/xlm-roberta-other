@@ -22,7 +22,6 @@ from text_utils.mutations import MutationConfig, TextMutator
 
 REDACTED_TOKEN = "REDACTED"
 SAFETY_CACHE_VERSION = 1
-XSTEST_DATASET_NAME = "natolambert/xstest-v2-copy"
 
 
 def _binary_example_from_text(
@@ -283,32 +282,6 @@ def load_jailbreak_binary_examples(
     return examples
 
 
-def load_xstest_binary_examples(
-    *,
-    dataset_name: str = XSTEST_DATASET_NAME,
-) -> list[dict[str, Any]]:
-    dataset = load_dataset(dataset_name)
-    examples: list[dict[str, Any]] = []
-    for split_name, split in tqdm(dataset.items(), desc="Loading XSTest splits", unit="split"):
-        for row_index, row in tqdm(enumerate(split), total=len(split), desc=f"Loading {split_name}", unit="row", leave=False):
-            completion = str(row.get("completion", "") or "").strip()
-            if not completion:
-                continue
-            final_label = str(row.get("final_label", "") or "").strip()
-            binary_label = 0 if final_label == "2_full_refusal" else 1
-            examples.append(
-                _binary_example_from_text(
-                    text=completion,
-                    binary_label=binary_label,
-                    role="response",
-                    tag=final_label or "xstest",
-                    source_id=f"{split_name}:{row.get('id', row_index)}",
-                    response_label_source="xstest",
-                )
-            )
-    return examples
-
-
 def build_binary_safety_examples(
     *,
     dataset_split: str = "train",
@@ -324,7 +297,6 @@ def build_binary_safety_examples(
     )
     examples.extend(load_salad_binary_examples())
     examples.extend(load_jailbreak_binary_examples())
-    examples.extend(load_xstest_binary_examples())
     return examples
 
 
